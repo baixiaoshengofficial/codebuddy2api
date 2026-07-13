@@ -13,6 +13,7 @@ from src.codebuddy_router import router as codebuddy_router, lifecycle_manager
 from src.codebuddy_auth_router import router as codebuddy_auth_router
 from src.settings_router import router as settings_router
 from src.frontend_router import router as frontend_router
+from src.checkin_manager import checkin_manager
 
 from config import get_server_host, get_server_port, get_log_level
 
@@ -31,9 +32,11 @@ async def lifespan(app: FastAPI):
     try:
         # 启动时初始化资源
         await lifecycle_manager.startup()
+        await checkin_manager.startup()
         yield
     finally:
         # 关闭时清理资源
+        await checkin_manager.shutdown()
         await lifecycle_manager.shutdown()
         logger.info("CodeBuddy2API Service stopped")
 

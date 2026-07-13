@@ -11,7 +11,7 @@ Priority order:
 import os
 import json
 import logging
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, Tuple
 from urllib.parse import urlparse
 
 logger = logging.getLogger(__name__)
@@ -42,7 +42,10 @@ _DEFAULT_CONFIG = {
     "CODEBUDDY_CREDS_DIR": ".codebuddy_creds",
     "CODEBUDDY_LOG_LEVEL": "INFO",
     "CODEBUDDY_SSL_VERIFY": "false",
-    "CODEBUDDY_ROTATION_COUNT": 1
+    "CODEBUDDY_ROTATION_COUNT": 1,
+    "CODEBUDDY_AUTO_CHECKIN": "true",
+    "CODEBUDDY_CHECKIN_TIME": "11:00",
+    "CODEBUDDY_BARK_URL": "https://bark.chenqinfeng.cn/a4K9KCJ56wmgoxyTjPsh3N/",
 }
 
 # --- Core Functions ---
@@ -187,6 +190,30 @@ def get_codebuddy_ssl_verify() -> bool:
 
 def get_rotation_count() -> int:
     return int(_get_config_value("CODEBUDDY_ROTATION_COUNT"))
+
+def get_auto_checkin_enabled() -> bool:
+    value = str(_get_config_value("CODEBUDDY_AUTO_CHECKIN")).strip().lower()
+    return value in ("true", "1", "yes", "y", "on")
+
+def get_checkin_time() -> str:
+    """Return daily check-in time as HH:MM in China timezone."""
+    raw = str(_get_config_value("CODEBUDDY_CHECKIN_TIME") or "11:00").strip()
+    try:
+        parts = raw.split(":")
+        hour = int(parts[0])
+        minute = int(parts[1]) if len(parts) > 1 else 0
+        if not (0 <= hour <= 23 and 0 <= minute <= 59):
+            raise ValueError("out of range")
+        return f"{hour:02d}:{minute:02d}"
+    except (TypeError, ValueError, IndexError):
+        return "11:00"
+
+def get_checkin_hour_minute() -> Tuple[int, int]:
+    hour_text, minute_text = get_checkin_time().split(":", 1)
+    return int(hour_text), int(minute_text)
+
+def get_bark_url() -> str:
+    return str(_get_config_value("CODEBUDDY_BARK_URL") or "").strip()
 
 # --- Public Setter for Hot-Reload ---
 

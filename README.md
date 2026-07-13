@@ -11,6 +11,7 @@
     - **服务访问认证**：通过环境变量设置密码，保护整个代理服务。
     - **CodeBuddy 官方认证**：在后端安全地管理和使用 CodeBuddy 的 `Bearer Token`。
 - 🔄 **凭证自动轮换**：支持在 `.codebuddy_creds` 目录中配置多个 CodeBuddy 认证凭证，服务会自动轮换使用，有效提高可用性和分担请求压力。
+- 🎁 **每日自动签到**：按设定的北京时间定点（默认每天 11:00）逐账号领取 Credits，并将结果推送到 Bark。
 - 🌐 **Web 管理界面**：内置一个美观、易用的 Web UI，方便用户管理凭证、测试 API 和查看服务状态。
 
 ## 🚀 快速开始
@@ -185,6 +186,8 @@ curl -sS -X POST 'http://192.168.100.3:8001/codebuddy/v1/chat/completions' \
 - `POST /codebuddy/v1/embeddings`: OpenAI 兼容 Embeddings 接口，使用本地确定性 hashing embedding，适合向量库连通和基础检索。
 - `GET /codebuddy/v1/credentials`: （需要认证）在 Web UI 中用于列出所有凭证。
 - `POST /codebuddy/v1/credentials`: （需要认证）在 Web UI 中用于添加新凭证。
+- `GET /api/checkin`: （需要认证）查看自动签到计划及逐账号状态。
+- `POST /api/checkin/run`: （需要认证）立即检查并领取所有账号的待领签到奖励。
 - `GET /health`: 服务的健康检查端点。
 
 ## 🔧 项目结构
@@ -196,13 +199,15 @@ codebuddy2api/
 │   ├── codebuddy_api_client.py    # 封装了与CodeBuddy官方API的通信
 │   ├── codebuddy_auth_router.py   # CodeBuddy OAuth2 认证路由
 │   ├── codebuddy_token_manager.py # CodeBuddy凭证加载与轮换管理器
+│   ├── checkin_manager.py          # WorkBuddy / CodeBuddy 自动签到管理器
 │   ├── codebuddy_router.py        # 核心API路由 (v1) - 已重构优化
 │   ├── frontend_router.py         # Web管理界面的路由
 │   ├── settings_router.py         # 设置管理路由
 │   ├── usage_stats_manager.py     # 使用统计管理器
 │   └── keyword_replacer.py        # 关键词替换模块
 ├── frontend/
-│   └── admin.html                 # Web管理界面的前端页面
+│   ├── src/                        # Vue 管理端源码
+│   └── vite.config.js              # Vite 构建配置
 ├── .codebuddy_creds/              # 存放CodeBuddy凭证的目录 (Git会忽略其中的文件)
 ├── web.py                         # FastAPI服务主入口
 ├── config.py                      # 环境变量配置管理
@@ -228,7 +233,10 @@ codebuddy2api/
 | `CODEBUDDY_CREDS_DIR` | `.codebuddy_creds` | 存放 CodeBuddy 认证凭证的目录。 |
 | `CODEBUDDY_LOG_LEVEL` | `INFO` | 日志级别，可选 `DEBUG`, `INFO`, `WARNING`, `ERROR`。 |
 | `CODEBUDDY_SSL_VERIFY` | `false` | SSL验证开关，设置为 `true` 启用SSL验证。 |
-| `CODEBUDDY_ROTATION_COUNT` | `10` | 凭证轮换计数，每N次请求后切换凭证。 |
+| `CODEBUDDY_ROTATION_COUNT` | `1` | 凭证轮换计数，每 N 次请求后切换凭证。 |
+| `CODEBUDDY_AUTO_CHECKIN` | `true` | 是否自动检查并领取每日签到奖励。 |
+| `CODEBUDDY_CHECKIN_TIME` | `11:00` | 每日自动签到时间（北京时间 HH:MM）。 |
+| `CODEBUDDY_BARK_URL` | （默认 Bark 地址） | 签到完成后推送结果的 Bark URL；留空则不推送。 |
 
 ## 🐛 故障排除
 

@@ -18,7 +18,7 @@ export DEPLOY_PASSWORD
 export CODEBUDDY_PASSWORD
 export CMD
 
-.PHONY: help deploy deploy-install-docker deploy-cn deploy-intl ps logs restart down shell health check remote
+.PHONY: help frontend-dev frontend-build deploy deploy-install-docker deploy-cn deploy-intl ps logs restart down shell health check remote
 
 help:
 	@echo "CodeBuddy2API deployment targets"
@@ -34,7 +34,9 @@ help:
 	@echo "  make down                    Stop remote service"
 	@echo "  make shell                   Open SSH shell on remote host"
 	@echo "  make health                  Check /health endpoint"
-	@echo "  make check                   Local shell syntax checks"
+	@echo "  make frontend-dev            Start the Vue development server"
+	@echo "  make frontend-build          Build the Vue admin console"
+	@echo "  make check                   Build frontend and run local checks"
 	@echo ""
 	@echo "Examples:"
 	@echo "  DEPLOY_PASSWORD='***' make deploy"
@@ -75,9 +77,16 @@ shell:
 health:
 	@curl -fsS "http://$(DEPLOY_HOST):$(DEPLOY_PORT)/health" && echo
 
+frontend-dev:
+	@cd frontend && npm run dev
+
+frontend-build:
+	@cd frontend && npm run build
+
 check:
 	@bash -n scripts/deploy_docker.sh
-	@node -e "const fs=require('fs'); const html=fs.readFileSync('frontend/admin.html','utf8'); const scripts=[...html.matchAll(/<script[^>]*>([\\s\\S]*?)<\\/script>/gi)].map(m=>m[1]).join('\\n'); new Function(scripts);"
+	@cd frontend && npm run build
+	@python3 -m py_compile config.py web.py src/*.py
 	@git diff --check
 
 remote:

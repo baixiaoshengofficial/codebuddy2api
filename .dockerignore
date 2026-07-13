@@ -15,6 +15,7 @@ __pycache__/
 .Python
 build/
 dist/
+frontend/node_modules/
 
 # Virtual Environment
 .venv

@@ -185,7 +185,10 @@ class CodeBuddyTokenManager:
                 credential_filename = os.path.basename(manual_cred['file_path'])
                 usage_stats_manager.record_credential_usage(credential_filename)
                 logger.info(f"Using manually selected credential: {credential_filename}")
-                return manual_cred['data']
+                selected = dict(manual_cred['data'])
+                selected['_credential_filename'] = credential_filename
+                selected['_credential_index'] = self.manual_selected_index
+                return selected
             else:
                 logger.warning("Manually selected credential is expired, falling back to automatic rotation")
                 self.manual_selected_index = None
@@ -210,7 +213,10 @@ class CodeBuddyTokenManager:
                 logger.info(f"Using fixed credential (rotation count is 0): {credential_filename}")
             else:
                 logger.info(f"Using fixed credential (auto rotation disabled): {credential_filename}")
-            return credential['data']
+            selected = dict(credential['data'])
+            selected['_credential_filename'] = credential_filename
+            selected['_credential_index'] = self.current_index
+            return selected
 
         # 自动轮换逻辑：当开关开启且轮换次数>0时
         if self.usage_count >= rotation_count:
@@ -232,11 +238,24 @@ class CodeBuddyTokenManager:
             f"Using credential: {credential_filename} "
             f"(Usage: {self.usage_count}/{rotation_count})"
         )
-        return credential['data']
+        selected = dict(credential['data'])
+        selected['_credential_filename'] = credential_filename
+        selected['_credential_index'] = self.current_index
+        return selected
     
     def get_all_credentials(self) -> List[Dict]:
         """获取所有凭证"""
         return [cred['data'] for cred in self.credentials]
+
+    def get_credential_records(self) -> List[Dict[str, Any]]:
+        """Return credential snapshots with stable filenames for background jobs."""
+        return [
+            {
+                "filename": os.path.basename(cred["file_path"]),
+                "data": dict(cred["data"]),
+            }
+            for cred in self.credentials
+        ]
     
     def get_credentials_info(self) -> List[Dict]:
         """获取所有凭证的详细信息，包括过期状态"""

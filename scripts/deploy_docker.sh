@@ -82,15 +82,20 @@ EOF
 }
 
 echo "==> Packaging repository"
-tar -czf "$ARCHIVE" -C "$ROOT_DIR" \
+COPYFILE_DISABLE=1 tar --no-xattrs -czf "$ARCHIVE" -C "$ROOT_DIR" \
   --exclude='.git' \
   --exclude='venv' \
   --exclude='.venv' \
+  --exclude='node_modules' \
+  --exclude='frontend/node_modules' \
+  --exclude='frontend/dist' \
   --exclude='__pycache__' \
   --exclude='*.pyc' \
   --exclude='.DS_Store' \
   --exclude='.env' \
   --exclude='config/config.json' \
+  --exclude='config/*.db' \
+  --exclude='config/*.db-*' \
   --exclude='.codebuddy_creds' \
   .
 
@@ -102,6 +107,9 @@ CODEBUDDY_SITE=$CODEBUDDY_SITE
 CODEBUDDY_CREDS_DIR=.codebuddy_creds
 CODEBUDDY_LOG_LEVEL=INFO
 CODEBUDDY_ROTATION_COUNT=1
+CODEBUDDY_AUTO_CHECKIN=true
+CODEBUDDY_CHECKIN_TIME=11:00
+CODEBUDDY_BARK_URL=https://bark.chenqinfeng.cn/a4K9KCJ56wmgoxyTjPsh3N/
 EOF
 
 echo "==> Preparing remote directory: $DEPLOY_USER@$DEPLOY_HOST:$DEPLOY_DIR"

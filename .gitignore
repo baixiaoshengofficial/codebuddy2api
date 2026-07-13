@@ -104,6 +104,8 @@ celerybeat.pid
 # Environments
 .env
 config.json
+config/*.db
+config/*.db-*
 .venv
 env/
 venv/
@@ -140,6 +142,8 @@ dmypy.json
 # IDE files
 .vscode/
 .idea/
+node_modules/
+frontend/dist/
 *.swp
 *.swo
 *~

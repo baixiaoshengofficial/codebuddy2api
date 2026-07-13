@@ -22,6 +22,13 @@ from .codebuddy_api_client import codebuddy_api_client
 from .codebuddy_model_manager import codebuddy_model_manager
 from .codebuddy_token_manager import codebuddy_token_manager
 from .usage_stats_manager import usage_stats_manager
+from .request_log_manager import (
+    build_request_preview,
+    build_response_preview,
+    detect_client,
+    get_client_detail,
+    request_log_manager,
+)
 from .keyword_replacer import (
     apply_keyword_replacement_to_messages,
     apply_keyword_replacement_to_tool_definitions,
@@ -648,6 +655,160 @@ def create_endpoint_probe(endpoint: str) -> Dict[str, Any]:
         "service": "codebuddy2api",
     }
 
+
+def estimate_request_tokens(value: Any) -> int:
+    """Estimate tokens when the upstream does not return usage metadata."""
+    try:
+        serialized = json.dumps(value, ensure_ascii=False, separators=(",", ":"))
+    except (TypeError, ValueError):
+        serialized = str(value)
+    cjk_count = len(re.findall(r"[\u4e00-\u9fff]", serialized))
+    non_cjk_count = len(re.sub(r"[\u4e00-\u9fff]", "", serialized))
+    return max(1, cjk_count + non_cjk_count // 4)
+
+
+def start_request_audit(
+    request: Request,
+    request_body: Dict[str, Any],
+    endpoint: str,
+    model: str,
+    credential: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
+    request_id = request.headers.get("x-request-id") or uuid.uuid4().hex
+    conversation_id = request.headers.get("x-conversation-id")
+    canonical_body = json.dumps(
+        request_body, ensure_ascii=False, sort_keys=True, separators=(",", ":"), default=str
+    )
+    credential = credential or {}
+    try:
+        record_id = request_log_manager.start_request(
+            request_id=request_id,
+            conversation_id=conversation_id,
+            endpoint=endpoint,
+            model=model or "unknown",
+            client=detect_client(request.headers, request_body),
+            client_detail=get_client_detail(request.headers),
+            client_host=request.client.host if request.client else None,
+            credential=credential.get("_credential_filename"),
+            credential_user_id=credential.get("user_id"),
+            request_preview=build_request_preview(request_body),
+            request_hash=hashlib.sha256(canonical_body.encode("utf-8")).hexdigest(),
+            is_streaming=bool(request_body.get("stream", False)),
+        )
+    except Exception as exc:
+        logger.error(f"创建请求明细失败: {exc}")
+        record_id = None
+    return {
+        "record_id": record_id,
+        "request_id": request_id,
+        "started_at": time.perf_counter(),
+        "estimated_input_tokens": estimate_request_tokens(request_body),
+    }
+
+
+def finish_request_audit(
+    audit: Dict[str, Any],
+    status_code: int,
+    usage: Optional[Dict[str, Any]] = None,
+    output_value: Any = None,
+    upstream_attempts: int = 1,
+    error: Optional[str] = None,
+) -> None:
+    if audit.get("record_id") is None:
+        return
+    latency_ms = max(0, int((time.perf_counter() - audit["started_at"]) * 1000))
+    estimated_output_tokens = None
+    if output_value not in (None, ""):
+        estimated_output_tokens = estimate_request_tokens(output_value)
+    try:
+        request_log_manager.finish_request(
+            record_id=audit["record_id"],
+            status_code=status_code,
+            latency_ms=latency_ms,
+            usage=usage,
+            upstream_attempts=upstream_attempts,
+            estimated_input_tokens=audit.get("estimated_input_tokens"),
+            estimated_output_tokens=estimated_output_tokens,
+            response_preview=build_response_preview(output_value),
+            error=error,
+        )
+    except Exception as exc:
+        logger.error(f"完成请求明细失败: {exc}")
+
+
+def extract_stream_metrics(chunk: Any, metrics: Dict[str, Any]) -> None:
+    """Collect usage/output from an OpenAI-compatible SSE chunk."""
+    if isinstance(chunk, bytes):
+        text = chunk.decode("utf-8", errors="ignore")
+    else:
+        text = str(chunk)
+    for line in text.splitlines():
+        obj = parse_sse_line(line)
+        if not obj:
+            continue
+        if obj.get("usage"):
+            metrics["usage"] = obj["usage"]
+        if obj.get("error"):
+            error_value = obj["error"]
+            error_type = error_value.get("type") if isinstance(error_value, dict) else None
+            if error_type == "connection_retry":
+                metrics["upstream_attempts"] += 1
+            else:
+                metrics["error"] = error_value.get("message") if isinstance(error_value, dict) else str(error_value)
+        for choice in obj.get("choices", []):
+            delta = choice.get("delta") or {}
+            if delta.get("content"):
+                metrics["output"].append(str(delta["content"]))
+
+
+def attach_stream_audit(response: StreamingResponse, audit: Dict[str, Any]) -> StreamingResponse:
+    original_iterator = response.body_iterator
+
+    async def audited_iterator():
+        metrics: Dict[str, Any] = {
+            "usage": None,
+            "output": [],
+            "error": None,
+            "upstream_attempts": 1,
+        }
+        status_code = response.status_code or 200
+        error = None
+        try:
+            async for chunk in original_iterator:
+                extract_stream_metrics(chunk, metrics)
+                yield chunk
+        except asyncio.CancelledError:
+            status_code = 499
+            error = "Client disconnected"
+            raise
+        except Exception as exc:
+            status_code = 500
+            error = str(exc)
+            raise
+        finally:
+            if metrics["error"] and not error:
+                status_code = 502
+                error = metrics["error"]
+            finish_request_audit(
+                audit,
+                status_code=status_code,
+                usage=metrics["usage"],
+                output_value="".join(metrics["output"]),
+                upstream_attempts=metrics["upstream_attempts"],
+                error=error,
+            )
+
+    response.body_iterator = audited_iterator()
+    return response
+
+
+def get_chat_output_text(response: Dict[str, Any]) -> str:
+    choices = response.get("choices") or []
+    if not choices:
+        return ""
+    message = choices[0].get("message") or {}
+    return str(message.get("content") or "")
+
 def normalize_embedding_input(input_value: Any) -> List[str]:
     """Normalize OpenAI embeddings input into a list of strings."""
     if isinstance(input_value, str):
@@ -838,6 +999,16 @@ async def chat_completions(
         # 获取有效凭证
         credential = CredentialManager.get_valid_credential()
         
+        # 预处理请求并创建持久化请求明细
+        payload = RequestProcessor.prepare_payload(request_body)
+        audit = start_request_audit(
+            request,
+            request_body,
+            endpoint="/codebuddy/v1/chat/completions",
+            model=payload.get("model", "unknown"),
+            credential=credential,
+        )
+
         # 生成请求头
         headers = codebuddy_api_client.generate_codebuddy_headers(
             bearer_token=credential.get('bearer_token'),
@@ -845,21 +1016,33 @@ async def chat_completions(
             conversation_id=x_conversation_id,
             conversation_request_id=x_conversation_request_id,
             conversation_message_id=x_conversation_message_id,
-            request_id=x_request_id
+            request_id=x_request_id or audit["request_id"]
         )
-        
-        # 预处理请求
-        payload = RequestProcessor.prepare_payload(request_body)
         usage_stats_manager.record_model_usage(payload.get("model", "unknown"))
         
         # 使用服务类处理请求
         service = CodeBuddyStreamService()
         client_wants_stream = request_body.get("stream", False)
         
-        if client_wants_stream:
-            return await service.handle_stream_response(payload, headers)
-        else:
-            return await service.handle_non_stream_response(payload, headers)
+        try:
+            if client_wants_stream:
+                response = await service.handle_stream_response(payload, headers)
+                return attach_stream_audit(response, audit)
+
+            response = await service.handle_non_stream_response(payload, headers)
+            finish_request_audit(
+                audit,
+                status_code=200,
+                usage=response.get("usage"),
+                output_value=get_chat_output_text(response),
+            )
+            return response
+        except HTTPException as exc:
+            finish_request_audit(audit, exc.status_code, error=str(exc.detail))
+            raise
+        except Exception as exc:
+            finish_request_audit(audit, 500, error=str(exc))
+            raise
                 
     except HTTPException:
         raise
@@ -889,21 +1072,41 @@ async def responses(
         chat_request = responses_request_to_chat_request(request_body)
 
         credential = CredentialManager.get_valid_credential()
+        payload = RequestProcessor.prepare_payload(chat_request)
+        audit = start_request_audit(
+            request,
+            request_body,
+            endpoint="/codebuddy/v1/responses",
+            model=payload.get("model", "unknown"),
+            credential=credential,
+        )
         headers = codebuddy_api_client.generate_codebuddy_headers(
             bearer_token=credential.get('bearer_token'),
             user_id=credential.get('user_id'),
             conversation_id=x_conversation_id,
             conversation_request_id=x_conversation_request_id,
             conversation_message_id=x_conversation_message_id,
-            request_id=x_request_id
+            request_id=x_request_id or audit["request_id"]
         )
-
-        payload = RequestProcessor.prepare_payload(chat_request)
         usage_stats_manager.record_model_usage(payload.get("model", "unknown"))
 
         service = CodeBuddyStreamService()
-        chat_response = await service.handle_non_stream_response(payload, headers)
+        try:
+            chat_response = await service.handle_non_stream_response(payload, headers)
+        except HTTPException as exc:
+            finish_request_audit(audit, exc.status_code, error=str(exc.detail))
+            raise
+        except Exception as exc:
+            finish_request_audit(audit, 500, error=str(exc))
+            raise
+
         response_payload = chat_response_to_responses_response(chat_response, response_id)
+        finish_request_audit(
+            audit,
+            status_code=200,
+            usage=chat_response.get("usage"),
+            output_value=response_payload.get("output_text"),
+        )
 
         if not client_wants_stream:
             return response_payload
@@ -961,8 +1164,15 @@ async def embeddings(
 
         model = request_body.get("model") or "codebuddy-embedding-hash"
         prompt_tokens = estimate_embedding_tokens(texts)
+        audit = start_request_audit(
+            request,
+            request_body,
+            endpoint="/codebuddy/v1/embeddings",
+            model=model,
+        )
+        usage_stats_manager.record_model_usage(model)
 
-        return {
+        response = {
             "object": "list",
             "data": [
                 {
@@ -978,6 +1188,8 @@ async def embeddings(
                 "total_tokens": prompt_tokens,
             },
         }
+        finish_request_audit(audit, status_code=200, usage=response["usage"])
+        return response
 
     except HTTPException:
         raise
