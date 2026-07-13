@@ -5,7 +5,7 @@ services:
     # 使用当前目录下的 Dockerfile 进行构建
     build: .
     # 为构建的镜像命名
-    image: xueyue052/codebuddy2api:latest
+    image: knighttools/codebuddy2api:latest
     # 容器的重启策略
     restart: unless-stopped
     # 将容器的 8001 端口映射到宿主机的 8001 端口
