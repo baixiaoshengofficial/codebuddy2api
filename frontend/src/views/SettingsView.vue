@@ -4,7 +4,7 @@ import { LockKeyhole, RefreshCw, Save, Settings2 } from '@lucide/vue'
 import { apiFetch } from '../lib/api'
 import { notify } from '../lib/notify'
 
-const readonlyKeys = new Set(['CODEBUDDY_CREDS_DIR', 'CODEBUDDY_LOG_LEVEL'])
+const readonlyKeys = new Set(['CODEBUDDY_CREDS_DIR', 'WORKBUDDY_CREDS_DIR', 'CODEBUDDY_LOG_LEVEL'])
 const loading = ref(true)
 const saving = ref(false)
 const settings = ref({})

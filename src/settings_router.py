@@ -22,7 +22,8 @@ SETTING_LABELS = {
     "CODEBUDDY_PORT": "服务端口",
     "CODEBUDDY_PASSWORD": "API 服务访问密码",
     "CODEBUDDY_SITE": "CodeBuddy 站点 (international/china)",
-    "CODEBUDDY_CREDS_DIR": "凭证文件目录",
+    "CODEBUDDY_CREDS_DIR": "CodeBuddy 凭证文件目录",
+    "WORKBUDDY_CREDS_DIR": "WorkBuddy 签到凭证目录",
     "CODEBUDDY_LOG_LEVEL": "日志级别",
     "CODEBUDDY_ROTATION_COUNT": "凭证轮换频率 (N次请求/凭证，设为0关闭轮换)",
     "CODEBUDDY_AUTO_CHECKIN": "自动领取每日签到奖励",
@@ -30,7 +31,7 @@ SETTING_LABELS = {
     "CODEBUDDY_BARK_URL": "签到结果 Bark 推送地址",
 }
 
-READONLY_SETTING_KEYS = {"CODEBUDDY_CREDS_DIR", "CODEBUDDY_LOG_LEVEL"}
+READONLY_SETTING_KEYS = {"CODEBUDDY_CREDS_DIR", "WORKBUDDY_CREDS_DIR", "CODEBUDDY_LOG_LEVEL"}
 
 class Settings(BaseModel):
     settings: Dict[str, Any]

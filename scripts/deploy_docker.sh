@@ -105,6 +105,7 @@ CODEBUDDY_HOST=0.0.0.0
 CODEBUDDY_PORT=8001
 CODEBUDDY_SITE=$CODEBUDDY_SITE
 CODEBUDDY_CREDS_DIR=.codebuddy_creds
+WORKBUDDY_CREDS_DIR=.workbuddy_creds
 CODEBUDDY_LOG_LEVEL=INFO
 CODEBUDDY_ROTATION_COUNT=1
 CODEBUDDY_AUTO_CHECKIN=true
@@ -113,7 +114,7 @@ CODEBUDDY_BARK_URL=https://bark.chenqinfeng.cn/a4K9KCJ56wmgoxyTjPsh3N/
 EOF
 
 echo "==> Preparing remote directory: $DEPLOY_USER@$DEPLOY_HOST:$DEPLOY_DIR"
-run_ssh "mkdir -p '$DEPLOY_DIR' '$DEPLOY_DIR/config' '$DEPLOY_DIR/.codebuddy_creds'"
+run_ssh "mkdir -p '$DEPLOY_DIR' '$DEPLOY_DIR/config' '$DEPLOY_DIR/.codebuddy_creds' '$DEPLOY_DIR/.workbuddy_creds'"
 
 echo "==> Uploading archive"
 copy_file "$ARCHIVE" "$REMOTE_ARCHIVE"
@@ -145,8 +146,9 @@ else
   echo 'Docker Compose is not installed.' >&2
   exit 2
 fi
-find '$DEPLOY_DIR' -mindepth 1 -maxdepth 1 ! -name config ! -name .codebuddy_creds ! -name .env -exec rm -rf {} +
+find '$DEPLOY_DIR' -mindepth 1 -maxdepth 1 ! -name config ! -name .codebuddy_creds ! -name .workbuddy_creds ! -name .env -exec rm -rf {} +
 tar -xzf '$REMOTE_ARCHIVE' -C '$DEPLOY_DIR'
+mkdir -p '$DEPLOY_DIR/.workbuddy_creds' '$DEPLOY_DIR/.codebuddy_creds' '$DEPLOY_DIR/config'
 chmod 600 '$DEPLOY_DIR/.env'
 cd '$DEPLOY_DIR'
 \$COMPOSE up -d --build

@@ -40,6 +40,7 @@ _DEFAULT_CONFIG = {
     "CODEBUDDY_PASSWORD": None,
     "CODEBUDDY_SITE": "international",
     "CODEBUDDY_CREDS_DIR": ".codebuddy_creds",
+    "WORKBUDDY_CREDS_DIR": ".workbuddy_creds",
     "CODEBUDDY_LOG_LEVEL": "INFO",
     "CODEBUDDY_SSL_VERIFY": "false",
     "CODEBUDDY_ROTATION_COUNT": 1,
@@ -180,6 +181,9 @@ def get_codebuddy_api_host() -> str:
 
 def get_codebuddy_creds_dir() -> str:
     return str(_get_config_value("CODEBUDDY_CREDS_DIR"))
+
+def get_workbuddy_creds_dir() -> str:
+    return str(_get_config_value("WORKBUDDY_CREDS_DIR") or ".workbuddy_creds")
 
 def get_log_level() -> str:
     return str(_get_config_value("CODEBUDDY_LOG_LEVEL")).upper()

@@ -14,8 +14,8 @@ dist/
 downloads/
 eggs/
 .eggs/
-lib/
-lib64/
+/lib/
+/lib64/
 parts/
 sdist/
 var/
@@ -135,6 +135,7 @@ dmypy.json
 # Ignore the content of the credentials directory, but not the directory itself.
 # This ensures the directory is present in the repository.
 .codebuddy_creds/*
+.workbuddy_creds/*
 # You can add a .gitkeep file inside .codebuddy_creds to ensure the directory is tracked.
 # Or, if you have an example file, you can explicitly un-ignore it like this:
 # !.codebuddy_creds/credential.example.json

@@ -11,6 +11,7 @@ from fastapi.middleware.cors import CORSMiddleware
 # Import the routers
 from src.codebuddy_router import router as codebuddy_router, lifecycle_manager
 from src.codebuddy_auth_router import router as codebuddy_auth_router
+from src.workbuddy_auth_router import router as workbuddy_auth_router
 from src.settings_router import router as settings_router
 from src.frontend_router import router as frontend_router
 from src.checkin_manager import checkin_manager
@@ -71,6 +72,13 @@ app.include_router(
     tags=["CodeBuddy OAuth2 Authentication"]
 )
 
+# 挂载 WorkBuddy 签到授权路由
+app.include_router(
+    workbuddy_auth_router,
+    prefix="/workbuddy",
+    tags=["WorkBuddy Check-in Authentication"]
+)
+
 # 挂载CodeBuddy API路由
 app.include_router(
     codebuddy_router,
@@ -109,6 +117,9 @@ async def root():
             "auth_start": "/codebuddy/auth/start",
             "auth_poll": "/codebuddy/auth/poll",
             "auth_callback": "/codebuddy/auth/callback",
+            "workbuddy_auth_start": "/workbuddy/auth/start",
+            "workbuddy_auth_poll": "/workbuddy/auth/poll",
+            "workbuddy_credentials": "/workbuddy/credentials",
             "get_settings": "/api/settings",
             "save_settings": "/api/settings"
         }

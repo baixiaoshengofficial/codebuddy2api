@@ -19,6 +19,7 @@ services:
       - ./config:/app/config
       # 将本地的凭证目录挂载到容器内，实现凭证持久化
       - ./.codebuddy_creds:/app/.codebuddy_creds
+      - ./.workbuddy_creds:/app/.workbuddy_creds
     # 加载 .env 文件中的环境变量
     env_file:
       - .env

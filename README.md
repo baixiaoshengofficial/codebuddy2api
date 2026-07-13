@@ -11,7 +11,7 @@
     - **服务访问认证**：通过环境变量设置密码，保护整个代理服务。
     - **CodeBuddy 官方认证**：在后端安全地管理和使用 CodeBuddy 的 `Bearer Token`。
 - 🔄 **凭证自动轮换**：支持在 `.codebuddy_creds` 目录中配置多个 CodeBuddy 认证凭证，服务会自动轮换使用，有效提高可用性和分担请求压力。
-- 🎁 **每日自动签到**：按设定的北京时间定点（默认每天 11:00）逐账号领取 Credits，并将结果推送到 Bark。
+- 🎁 **每日自动签到**：通过独立的 WorkBuddy 授权获取签到凭证，按北京时间定点领取 Credits，并将结果推送到 Bark。
 - 🌐 **Web 管理界面**：内置一个美观、易用的 Web UI，方便用户管理凭证、测试 API 和查看服务状态。
 
 ## 🚀 快速开始
@@ -188,6 +188,9 @@ curl -sS -X POST 'http://192.168.100.3:8001/codebuddy/v1/chat/completions' \
 - `POST /codebuddy/v1/credentials`: （需要认证）在 Web UI 中用于添加新凭证。
 - `GET /api/checkin`: （需要认证）查看自动签到计划及逐账号状态。
 - `POST /api/checkin/run`: （需要认证）立即检查并领取所有账号的待领签到奖励。
+- `GET /workbuddy/auth/start`: （需要认证）启动 WorkBuddy 签到授权。
+- `POST /workbuddy/auth/poll`: （需要认证）轮询 WorkBuddy 授权结果并保存凭证。
+- `GET /workbuddy/credentials`: （需要认证）列出已授权的 WorkBuddy 签到账号。
 - `GET /health`: 服务的健康检查端点。
 
 ## 🔧 项目结构
@@ -199,7 +202,9 @@ codebuddy2api/
 │   ├── codebuddy_api_client.py    # 封装了与CodeBuddy官方API的通信
 │   ├── codebuddy_auth_router.py   # CodeBuddy OAuth2 认证路由
 │   ├── codebuddy_token_manager.py # CodeBuddy凭证加载与轮换管理器
-│   ├── checkin_manager.py          # WorkBuddy / CodeBuddy 自动签到管理器
+│   ├── checkin_manager.py          # WorkBuddy 自动签到管理器
+│   ├── workbuddy_auth_router.py    # WorkBuddy 签到授权
+│   ├── workbuddy_token_manager.py  # WorkBuddy 签到凭证存储
 │   ├── codebuddy_router.py        # 核心API路由 (v1) - 已重构优化
 │   ├── frontend_router.py         # Web管理界面的路由
 │   ├── settings_router.py         # 设置管理路由
@@ -231,6 +236,7 @@ codebuddy2api/
 | `CODEBUDDY_PORT` | `8001` | 服务监听的端口。 |
 | `CODEBUDDY_SITE` | `international` | CodeBuddy 站点，可选 `international`（国际站）或 `china`（国内站）；API 端点会按站点自动选择。 |
 | `CODEBUDDY_CREDS_DIR` | `.codebuddy_creds` | 存放 CodeBuddy 认证凭证的目录。 |
+| `WORKBUDDY_CREDS_DIR` | `.workbuddy_creds` | 存放 WorkBuddy 签到授权凭证的目录。 |
 | `CODEBUDDY_LOG_LEVEL` | `INFO` | 日志级别，可选 `DEBUG`, `INFO`, `WARNING`, `ERROR`。 |
 | `CODEBUDDY_SSL_VERIFY` | `false` | SSL验证开关，设置为 `true` 启用SSL验证。 |
 | `CODEBUDDY_ROTATION_COUNT` | `1` | 凭证轮换计数，每 N 次请求后切换凭证。 |

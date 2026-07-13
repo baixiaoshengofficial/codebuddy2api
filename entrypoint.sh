@@ -12,7 +12,9 @@ APP_USER="appuser"
 # We apply this to all potential volume mount points.
 echo "Ensuring ownership of mounted directories..."
 chown -R ${APP_USER}:${APP_USER} /app/config
+mkdir -p /app/.codebuddy_creds /app/.workbuddy_creds
 chown -R ${APP_USER}:${APP_USER} /app/.codebuddy_creds
+chown -R ${APP_USER}:${APP_USER} /app/.workbuddy_creds
 echo "Ownership fixed."
 
 # Hand over control to the 'appuser' and execute the CMD from the Dockerfile.
