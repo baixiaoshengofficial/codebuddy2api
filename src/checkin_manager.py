@@ -23,10 +23,6 @@ from .workbuddy_token_manager import workbuddy_token_manager
 
 logger = logging.getLogger(__name__)
 CHINA_TIMEZONE = timezone(timedelta(hours=8))
-# Desktop check-in uses User-Agent WorkBuddy/* but X-Product = deploymentType (SaaS).
-# X-Product=WorkBuddy is only for /v2/activity/workbuddy/banner, not billing/meter.
-WORKBUDDY_CLIENT_VERSION = "5.2.5"
-CHECKIN_PRODUCT = "SaaS"
 
 
 class CheckinError(RuntimeError):
@@ -34,8 +30,8 @@ class CheckinError(RuntimeError):
 
 
 class CodeBuddyCheckinManager:
-    STATUS_PATH = "/billing/meter/checkin-status"
-    CLAIM_PATH = "/billing/meter/daily-checkin"
+    STATUS_PATH = "/v2/billing/meter/checkin-activity-status"
+    CLAIM_PATH = "/v2/billing/meter/daily-checkin"
     # Upstream daily-checkin business code when the account already claimed today.
     ALREADY_CHECKED_IN_CODES = {10001}
 
@@ -120,20 +116,18 @@ class CodeBuddyCheckinManager:
 
     @classmethod
     def _workbuddy_headers(cls, credential: Dict[str, Any], token: str) -> Dict[str, str]:
-        """Build headers aligned with WorkBuddy desktop /billing/meter check-in calls."""
+        """Build the identity headers used by the WorkBuddy desktop AuthService."""
         user_id = cls._credential_user_id(credential)
         domain = cls._credential_domain(credential)
         headers = {
             "Accept": "application/json",
             "Content-Type": "application/json",
             "Authorization": f"Bearer {token}",
-            "User-Agent": f"WorkBuddy/{WORKBUDDY_CLIENT_VERSION}",
-            "X-Product": CHECKIN_PRODUCT,
-            "X-Domain": domain,
-            "X-Requested-With": "XMLHttpRequest",
         }
         if user_id:
             headers["X-User-Id"] = user_id
+        if domain:
+            headers["X-Domain"] = domain
         enterprise_id = credential.get("enterprise_id") or credential.get("enterpriseId")
         if enterprise_id:
             headers["X-Enterprise-Id"] = str(enterprise_id)
@@ -214,14 +208,25 @@ class CodeBuddyCheckinManager:
             "daily_credit",
             "total_credits",
             "week_progress",
+            "week_checkin_days",
+            "checkin_dates",
             "is_streak_day",
             "next_streak_day",
+            "streak_bonus_days",
             "streak_bonus_credit",
             "activity_name",
+            "theme_name",
+            "season",
+            "start_time",
             "end_time",
+            "claim_button_text",
+            "action_button",
         ):
             if key in data:
                 result[key] = data[key]
+        if "credit" in data:
+            result["today_credit"] = data["credit"]
+            result["daily_credit"] = data["credit"]
 
     async def _check_account(
         self,
@@ -253,8 +258,14 @@ class CodeBuddyCheckinManager:
                 result.update(status="already_checked_in", message="今日奖励已领取")
                 return result
 
-            # checkin-status may report active=false even after a successful same-day claim.
-            # Resolve the real state by attempting daily-checkin.
+            if not status_data.get("active"):
+                activity = status_data.get("activity_name")
+                message = "当前账号未开放签到活动"
+                if activity:
+                    message = f"{message}（{activity}）"
+                result.update(status="inactive", message=message)
+                return result
+
             claim_payload = await self._post_payload(client, self.CLAIM_PATH, credential, token)
             claim_code = claim_payload.get("code")
             claim_msg = str(claim_payload.get("msg") or "")
@@ -267,8 +278,10 @@ class CodeBuddyCheckinManager:
 
             if claim_code == 0:
                 claim_data = claim_payload.get("data")
-                if isinstance(claim_data, dict):
-                    self._merge_upstream(result, claim_data)
+                if not isinstance(claim_data, dict):
+                    result.update(status="error", message="签到接口未返回奖励数据")
+                    return result
+                self._merge_upstream(result, claim_data)
                 result.update(
                     status="claimed",
                     message="签到成功，奖励已领取",
@@ -293,14 +306,6 @@ class CodeBuddyCheckinManager:
                     message=claim_msg or "今日奖励已领取",
                     today_checked_in=True,
                 )
-                return result
-
-            if not status_data.get("active"):
-                activity = status_data.get("activity_name")
-                message = claim_msg or "当前账号未开放签到活动"
-                if activity and "活动" not in message:
-                    message = f"{message}（{activity}）"
-                result.update(status="inactive", message=message)
                 return result
 
             result.update(

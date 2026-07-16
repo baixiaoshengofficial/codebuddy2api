@@ -120,8 +120,11 @@ class CheckinUsesWorkBuddyStoreTests(unittest.IsolatedAsyncioTestCase):
         status = await checkin.run_all(force=True)
         self.assertTrue(status["authorized"])
         self.assertEqual(status["accounts"][0]["status"], "already_checked_in")
-        self.assertEqual(calls[0]["headers"].get("x-product"), "SaaS")
-        self.assertEqual(calls[0]["path"], "/billing/meter/checkin-status")
+        self.assertIsNone(calls[0]["headers"].get("x-product"))
+        self.assertEqual(
+            calls[0]["path"],
+            "/v2/billing/meter/checkin-activity-status",
+        )
 
     async def test_unauthorized_message_without_workbuddy_creds(self):
         temporary = tempfile.TemporaryDirectory()

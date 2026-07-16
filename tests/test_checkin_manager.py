@@ -64,7 +64,7 @@ class CheckinManagerTests(unittest.IsolatedAsyncioTestCase):
     async def test_claims_active_unchecked_account(self):
         manager, calls = self.make_manager([
             {"code": 0, "data": {"active": True, "today_checked_in": False}},
-            {"code": 0, "data": {"today_credit": 100}},
+            {"code": 0, "data": {"credit": 100, "streak_days": 2}},
             {"code": 0, "data": {
                 "active": True,
                 "today_checked_in": True,
@@ -81,16 +81,15 @@ class CheckinManagerTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(account["today_credit"], 100)
         self.assertEqual(account["streak_days"], 2)
         self.assertEqual(self._paths(calls), [
-            "/billing/meter/checkin-status",
-            "/billing/meter/daily-checkin",
-            "/billing/meter/checkin-status",
+            "/v2/billing/meter/checkin-activity-status",
+            "/v2/billing/meter/daily-checkin",
+            "/v2/billing/meter/checkin-activity-status",
         ])
         headers = calls[0]["headers"]
-        self.assertEqual(headers.get("x-product"), "SaaS")
-        self.assertIsNone(headers.get("x-ide-type"))
+        self.assertIsNone(headers.get("x-product"))
         self.assertEqual(headers.get("x-user-id"), "user-1")
         self.assertEqual(headers.get("authorization"), "Bearer secret")
-        self.assertTrue(headers.get("user-agent", "").startswith("WorkBuddy/"))
+        self.assertEqual(headers.get("x-domain"), "copilot.tencent.com")
         self.assertFalse(status["running"])
 
     async def test_does_not_claim_when_already_checked_in(self):
@@ -105,38 +104,37 @@ class CheckinManagerTests(unittest.IsolatedAsyncioTestCase):
         status = await manager.run_all(force=True)
 
         self.assertEqual(status["accounts"][0]["status"], "already_checked_in")
-        self.assertEqual(self._paths(calls), ["/billing/meter/checkin-status"])
+        self.assertEqual(self._paths(calls), ["/v2/billing/meter/checkin-activity-status"])
 
     async def test_inactive_campaign_is_recorded_without_claim(self):
         manager, calls = self.make_manager([
             {"code": 0, "data": {"active": False, "today_checked_in": False}},
-            (400, {"code": 10002, "msg": "活动未开放"}),
         ])
 
         status = await manager.run_all(force=True)
 
         self.assertEqual(status["accounts"][0]["status"], "inactive")
-        self.assertEqual(status["accounts"][0]["message"], "活动未开放")
-        self.assertEqual(self._paths(calls), [
-            "/billing/meter/checkin-status",
-            "/billing/meter/daily-checkin",
-        ])
+        self.assertEqual(status["accounts"][0]["message"], "当前账号未开放签到活动")
+        self.assertEqual(
+            self._paths(calls),
+            ["/v2/billing/meter/checkin-activity-status"],
+        )
 
-    async def test_inactive_status_but_already_claimed_today(self):
+    async def test_claim_without_reward_data_is_not_reported_as_success(self):
         manager, calls = self.make_manager([
-            {"code": 0, "data": {"active": False, "today_checked_in": False}},
-            (400, {"code": 10001, "msg": "今天已签到，请明天再来"}),
+            {"code": 0, "data": {"active": True, "today_checked_in": False}},
+            {"code": 0, "msg": "OK", "data": None},
         ])
 
         status = await manager.run_all(force=True)
 
         account = status["accounts"][0]
-        self.assertEqual(account["status"], "already_checked_in")
-        self.assertTrue(account["today_checked_in"])
-        self.assertEqual(account["message"], "今天已签到，请明天再来")
+        self.assertEqual(account["status"], "error")
+        self.assertFalse(account["today_checked_in"])
+        self.assertEqual(account["message"], "签到接口未返回奖励数据")
         self.assertEqual(self._paths(calls), [
-            "/billing/meter/checkin-status",
-            "/billing/meter/daily-checkin",
+            "/v2/billing/meter/checkin-activity-status",
+            "/v2/billing/meter/daily-checkin",
         ])
 
     async def test_successful_result_is_not_repeated_same_day(self):
@@ -147,7 +145,7 @@ class CheckinManagerTests(unittest.IsolatedAsyncioTestCase):
         await manager.run_all(force=True)
         await manager.run_all(force=False)
 
-        self.assertEqual(self._paths(calls), ["/billing/meter/checkin-status"])
+        self.assertEqual(self._paths(calls), ["/v2/billing/meter/checkin-activity-status"])
         with open(manager.state_file, "r", encoding="utf-8") as handle:
             saved = json.load(handle)
         self.assertEqual(saved["accounts"]["account.json"]["status"], "already_checked_in")
