@@ -37,6 +37,9 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
+LOCAL_EMBEDDING_MODEL_ID = "codebuddy-embedding-hash"
+LOCAL_EMBEDDING_DIMENSIONS = 1536
+
 def get_codebuddy_api_url() -> str:
     """获取当前 CodeBuddy API URL，支持后台热更新站点配置。"""
     from config import get_codebuddy_api_endpoint
@@ -840,7 +843,10 @@ def estimate_embedding_tokens(texts: List[str]) -> int:
     """Return a rough token count for usage reporting."""
     return sum(max(1, len(text) // 4) for text in texts)
 
-def create_hash_embedding(text: str, dimensions: int = 1536) -> List[float]:
+def create_hash_embedding(
+    text: str,
+    dimensions: int = LOCAL_EMBEDDING_DIMENSIONS,
+) -> List[float]:
     """Create a deterministic local embedding using feature hashing."""
     tokens = re.findall(r"[a-zA-Z0-9_]+|[\u4e00-\u9fff]|[^\s]", text.lower())
     if not tokens:
@@ -1153,7 +1159,7 @@ async def embeddings(
         if not texts:
             raise HTTPException(status_code=400, detail="Embeddings request requires a non-empty 'input' field")
 
-        dimensions = request_body.get("dimensions", 1536)
+        dimensions = request_body.get("dimensions", LOCAL_EMBEDDING_DIMENSIONS)
         try:
             dimensions = int(dimensions)
         except (TypeError, ValueError):
@@ -1162,7 +1168,7 @@ async def embeddings(
         if dimensions <= 0 or dimensions > 4096:
             raise HTTPException(status_code=400, detail="dimensions must be between 1 and 4096")
 
-        model = request_body.get("model") or "codebuddy-embedding-hash"
+        model = request_body.get("model") or LOCAL_EMBEDDING_MODEL_ID
         prompt_tokens = estimate_embedding_tokens(texts)
         audit = start_request_audit(
             request,
@@ -1201,14 +1207,19 @@ async def embeddings(
 async def list_v1_models():
     """获取CodeBuddy V1模型列表"""
     try:
-        models = await codebuddy_model_manager.get_models()
+        upstream_models = await codebuddy_model_manager.get_models()
+        models = list(dict.fromkeys([*upstream_models, LOCAL_EMBEDDING_MODEL_ID]))
         return {
             "object": "list",
             "data": [{
                 "id": model,
                 "object": "model",
                 "created": int(time.time()),
-                "owned_by": "codebuddy"
+                "owned_by": (
+                    "codebuddy2api"
+                    if model == LOCAL_EMBEDDING_MODEL_ID
+                    else "codebuddy"
+                )
             } for model in models]
         }
         
