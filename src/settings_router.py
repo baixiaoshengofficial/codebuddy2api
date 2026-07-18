@@ -31,7 +31,13 @@ SETTING_LABELS = {
     "CODEBUDDY_BARK_URL": "签到结果 Bark 推送地址",
 }
 
-READONLY_SETTING_KEYS = {"CODEBUDDY_CREDS_DIR", "WORKBUDDY_CREDS_DIR", "CODEBUDDY_LOG_LEVEL"}
+READONLY_SETTING_KEYS = {
+    "CODEBUDDY_HOST",
+    "CODEBUDDY_PORT",
+    "CODEBUDDY_CREDS_DIR",
+    "WORKBUDDY_CREDS_DIR",
+    "CODEBUDDY_LOG_LEVEL",
+}
 
 class Settings(BaseModel):
     settings: Dict[str, Any]
@@ -42,7 +48,8 @@ async def get_settings(_token: str = Depends(authenticate)):
     try:
         return {
             "settings": get_active_config(),
-            "labels": SETTING_LABELS
+            "labels": SETTING_LABELS,
+            "readonly_keys": sorted(READONLY_SETTING_KEYS),
         }
     except Exception as e:
         logger.error(f"Error retrieving active config: {e}")

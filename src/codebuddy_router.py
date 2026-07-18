@@ -45,26 +45,8 @@ def get_codebuddy_api_url() -> str:
     from config import get_codebuddy_api_endpoint
     return f"{get_codebuddy_api_endpoint()}/v2/chat/completions"
 
-# --- 配置管理 ---
-class SecurityConfig:
-    """安全配置管理器"""
-    
-    @staticmethod
-    def get_ssl_verify() -> bool:
-        """获取SSL验证设置 - 默认关闭，可通过环境变量启用"""
-        import os
-        # 默认关闭SSL验证，只有明确设置为true时才启用
-        ssl_verify_env = os.getenv("CODEBUDDY_SSL_VERIFY", "false").lower()
-        ssl_verify = ssl_verify_env == "true"
-        
-        if not ssl_verify:
-            logger.warning("⚠️  SSL验证已禁用 - 仅在开发环境使用！生产环境请设置 CODEBUDDY_SSL_VERIFY=true")
-        
-        return ssl_verify
-
 # --- HTTP 客户端配置 ---
 HTTP_CLIENT_CONFIG = {
-    "verify": SecurityConfig.get_ssl_verify(),
     "timeout": httpx.Timeout(300.0, connect=30.0, read=300.0),
     "limits": httpx.Limits(max_keepalive_connections=20, max_connections=100)
 }

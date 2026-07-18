@@ -227,22 +227,25 @@ codebuddy2api/
 
 ## ⚙️ 配置选项
 
-所有配置均通过 `.env` 文件或环境变量进行管理。
+启动配置由 `.env` 或环境变量提供。管理端只允许修改可热加载的设置，改动会
+立即生效并按需写入 `config/config.json`。监听地址、端口、日志级别和凭证目录
+在管理端只读，始终由启动配置管理，不会被管理端保存的快照覆盖。
 
 | 环境变量 | 默认值 | 说明 |
 | ---------------------- | --------------------- | ---------------------------------------------------------- |
 | `CODEBUDDY_PASSWORD` | - | **(必需)** 访问此API服务的密码。 |
 | `CODEBUDDY_HOST` | `127.0.0.1` | 服务监听的主机地址。 |
 | `CODEBUDDY_PORT` | `8001` | 服务监听的端口。 |
-| `CODEBUDDY_SITE` | `international` | CodeBuddy 站点，可选 `international`（国际站）或 `china`（国内站）；API 端点会按站点自动选择。 |
-| `CODEBUDDY_CREDS_DIR` | `.codebuddy_creds` | 存放 CodeBuddy 认证凭证的目录。 |
-| `WORKBUDDY_CREDS_DIR` | `.workbuddy_creds` | 存放 WorkBuddy 签到授权凭证的目录。 |
+| `CODEBUDDY_SITE` | `china` | CodeBuddy 站点，可选 `international`（国际站）或 `china`（国内站）；API 端点会按站点自动选择。 |
 | `CODEBUDDY_LOG_LEVEL` | `INFO` | 日志级别，可选 `DEBUG`, `INFO`, `WARNING`, `ERROR`。 |
-| `CODEBUDDY_SSL_VERIFY` | `false` | SSL验证开关，设置为 `true` 启用SSL验证。 |
 | `CODEBUDDY_ROTATION_COUNT` | `1` | 凭证轮换计数，每 N 次请求后切换凭证。 |
 | `CODEBUDDY_AUTO_CHECKIN` | `true` | 是否自动检查并领取每日签到奖励。 |
 | `CODEBUDDY_CHECKIN_TIME` | `11:00` | 每日自动签到时间（北京时间 HH:MM）。 |
-| `CODEBUDDY_BARK_URL` | （默认 Bark 地址） | 签到完成后推送结果的 Bark URL；留空则不推送。 |
+| `CODEBUDDY_BARK_URL` | 空 | 签到完成后推送结果的 Bark URL；留空则不推送。 |
+
+CodeBuddy 和 WorkBuddy 凭证分别固定存放在 `.codebuddy_creds` 与
+`.workbuddy_creds`。Docker 部署时如需从宿主机查看或备份凭证，请修改
+`docker-compose.yml` 的卷来源路径，容器内目标路径保持不变。
 
 ## 🐛 故障排除
 

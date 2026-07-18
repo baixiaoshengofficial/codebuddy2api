@@ -18,6 +18,7 @@ logger = logging.getLogger(__name__)
 
 # --- Private State ---
 _config_cache: Dict[str, Any] = {}
+_persisted_config: Dict[str, Any] = {}
 _CONFIG_JSON_PATH = 'config/config.json'  # Use a path inside a directory
 
 _CODEBUDDY_SITE_ENDPOINTS = {
@@ -38,16 +39,24 @@ _DEFAULT_CONFIG = {
     "CODEBUDDY_HOST": "127.0.0.1",
     "CODEBUDDY_PORT": 8001,
     "CODEBUDDY_PASSWORD": None,
-    "CODEBUDDY_SITE": "international",
+    "CODEBUDDY_SITE": "china",
     "CODEBUDDY_CREDS_DIR": ".codebuddy_creds",
     "WORKBUDDY_CREDS_DIR": ".workbuddy_creds",
     "CODEBUDDY_LOG_LEVEL": "INFO",
-    "CODEBUDDY_SSL_VERIFY": "false",
     "CODEBUDDY_ROTATION_COUNT": 1,
     "CODEBUDDY_AUTO_CHECKIN": "true",
     "CODEBUDDY_CHECKIN_TIME": "11:00",
-    "CODEBUDDY_BARK_URL": "https://bark.chenqinfeng.cn/a4K9KCJ56wmgoxyTjPsh3N/",
+    "CODEBUDDY_BARK_URL": "",
 }
+
+_ENV_ONLY_CONFIG_KEYS = {
+    "CODEBUDDY_HOST",
+    "CODEBUDDY_PORT",
+    "CODEBUDDY_CREDS_DIR",
+    "WORKBUDDY_CREDS_DIR",
+    "CODEBUDDY_LOG_LEVEL",
+}
+_PERSISTED_CONFIG_KEYS = set(_DEFAULT_CONFIG) - _ENV_ONLY_CONFIG_KEYS
 
 # --- Core Functions ---
 
@@ -86,9 +95,10 @@ def load_config():
     Loads configuration from all sources into the in-memory cache.
     This should be called once at application startup.
     """
-    global _config_cache
+    global _config_cache, _persisted_config
     
     config = _DEFAULT_CONFIG.copy()
+    _persisted_config = {}
     
     try:
         from dotenv import load_dotenv
@@ -109,7 +119,12 @@ def load_config():
                 content = f.read()
                 if content:
                     persisted_config = json.loads(content)
-                    config.update(persisted_config)
+                    _persisted_config = {
+                        key: value
+                        for key, value in persisted_config.items()
+                        if key in _PERSISTED_CONFIG_KEYS
+                    }
+                    config.update(_persisted_config)
                     logger.info(f"Loaded and merged persisted settings from {_CONFIG_JSON_PATH}.")
         except Exception as e:
             logger.error(f"Error loading {_CONFIG_JSON_PATH}: {e}")
@@ -129,11 +144,7 @@ def _update_config_value(key: str, value: Any):
 
 
 def save_config_to_json():
-    """
-    Saves the entire current in-memory configuration to config.json.
-    This is simpler and more robust, ensuring a complete snapshot is always saved.
-    This will create the file if it doesn't exist.
-    """
+    """Persist only settings explicitly overridden through the management UI."""
     try:
         # Ensure the directory exists before writing the file
         config_dir = os.path.dirname(_CONFIG_JSON_PATH)
@@ -142,10 +153,7 @@ def save_config_to_json():
             logger.info(f"Created config directory at {config_dir}")
 
         with open(_CONFIG_JSON_PATH, 'w', encoding='utf-8') as f:
-            # Only save keys that are part of the original default config
-            # to avoid saving runtime-only variables.
-            config_to_save = {key: _config_cache.get(key) for key in _DEFAULT_CONFIG}
-            json.dump(config_to_save, f, indent=4)
+            json.dump(_persisted_config, f, indent=4)
         logger.info(f"Settings successfully persisted to {_CONFIG_JSON_PATH}.")
     except Exception as e:
         logger.error(f"Failed to save config to {_CONFIG_JSON_PATH}: {e}")
@@ -168,12 +176,12 @@ def get_server_password() -> Optional[str]:
     return _get_config_value("CODEBUDDY_PASSWORD")
 
 def get_codebuddy_site() -> str:
-    site = str(_get_config_value("CODEBUDDY_SITE") or "international").strip().lower()
+    site = str(_get_config_value("CODEBUDDY_SITE") or "china").strip().lower()
     return _CODEBUDDY_SITE_ALIASES.get(site, site)
 
 def get_codebuddy_api_endpoint() -> str:
     site = get_codebuddy_site()
-    return _CODEBUDDY_SITE_ENDPOINTS.get(site, _CODEBUDDY_SITE_ENDPOINTS["international"])
+    return _CODEBUDDY_SITE_ENDPOINTS.get(site, _CODEBUDDY_SITE_ENDPOINTS["china"])
 
 def get_codebuddy_api_host() -> str:
     parsed = urlparse(get_codebuddy_api_endpoint())
@@ -187,10 +195,6 @@ def get_workbuddy_creds_dir() -> str:
 
 def get_log_level() -> str:
     return str(_get_config_value("CODEBUDDY_LOG_LEVEL")).upper()
-
-def get_codebuddy_ssl_verify() -> bool:
-    value = str(_get_config_value("CODEBUDDY_SSL_VERIFY")).strip().lower()
-    return value in ("true", "1", "yes", "y", "on")
 
 def get_rotation_count() -> int:
     return int(_get_config_value("CODEBUDDY_ROTATION_COUNT"))
@@ -223,20 +227,28 @@ def get_bark_url() -> str:
 
 def update_settings(new_settings: Dict[str, Any]):
     """Updates the live config and persists it to config.json."""
+    global _persisted_config
+
+    changed = False
     for key, value in new_settings.items():
-        if key in _config_cache:
+        if key in _PERSISTED_CONFIG_KEYS:
             original_type = type(_DEFAULT_CONFIG.get(key, value))
             try:
                 if original_type is bool:
                     typed_value = str(value).lower() in ('true', '1', 't', 'y', 'yes')
                 else:
                     typed_value = original_type(value)
-                _update_config_value(key, typed_value)
             except (ValueError, TypeError):
                 logger.warning(f"Could not cast new value for '{key}' to {original_type}. Using as string.")
-                _update_config_value(key, value)
-    
-    save_config_to_json()
+                typed_value = value
+
+            if typed_value != _config_cache.get(key):
+                _update_config_value(key, typed_value)
+                _persisted_config[key] = typed_value
+                changed = True
+
+    if changed:
+        save_config_to_json()
 
 # --- Initial Load ---
 load_config()

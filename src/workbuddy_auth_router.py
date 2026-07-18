@@ -16,7 +16,6 @@ from config import (
     get_codebuddy_api_endpoint,
     get_codebuddy_api_host,
     get_codebuddy_site,
-    get_codebuddy_ssl_verify,
 )
 from .auth import authenticate
 from .workbuddy_token_manager import workbuddy_token_manager
@@ -162,7 +161,7 @@ async def _fetch_account_uid(client: httpx.AsyncClient, auth_state: str, access_
 async def start_workbuddy_auth() -> Dict[str, Any]:
     try:
         headers = _auth_headers()
-        async with httpx.AsyncClient(verify=get_codebuddy_ssl_verify()) as client:
+        async with httpx.AsyncClient() as client:
             nonce = secrets.token_hex(8)
             state_url = f"{_auth_state_endpoint()}?platform={WORKBUDDY_PLATFORM}&nonce={nonce}"
             response = await client.post(state_url, json={"nonce": nonce}, headers=headers, timeout=30)
@@ -234,7 +233,7 @@ async def poll_workbuddy_auth_status(auth_state: str) -> Dict[str, Any]:
     try:
         headers = _poll_headers()
         url = f"{_auth_token_endpoint()}?state={auth_state}"
-        async with httpx.AsyncClient(verify=get_codebuddy_ssl_verify()) as client:
+        async with httpx.AsyncClient() as client:
             response = await client.get(url, headers=headers, timeout=30)
             if response.status_code != 200:
                 return {

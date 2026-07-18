@@ -17,7 +17,6 @@ from config import (
     get_checkin_hour_minute,
     get_checkin_time,
     get_codebuddy_api_endpoint,
-    get_codebuddy_ssl_verify,
 )
 from .workbuddy_token_manager import workbuddy_token_manager
 
@@ -89,7 +88,6 @@ class CodeBuddyCheckinManager:
         return httpx.AsyncClient(
             base_url=get_codebuddy_api_endpoint().rstrip("/"),
             timeout=httpx.Timeout(15.0),
-            verify=get_codebuddy_ssl_verify(),
             headers={
                 "Accept": "application/json",
                 "Content-Type": "application/json",

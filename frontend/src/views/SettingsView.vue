@@ -4,7 +4,13 @@ import { LockKeyhole, RefreshCw, Save, Settings2 } from '@lucide/vue'
 import { apiFetch } from '../lib/api'
 import { notify } from '../lib/notify'
 
-const readonlyKeys = new Set(['CODEBUDDY_CREDS_DIR', 'WORKBUDDY_CREDS_DIR', 'CODEBUDDY_LOG_LEVEL'])
+const readonlyKeys = ref(new Set([
+  'CODEBUDDY_HOST',
+  'CODEBUDDY_PORT',
+  'CODEBUDDY_CREDS_DIR',
+  'WORKBUDDY_CREDS_DIR',
+  'CODEBUDDY_LOG_LEVEL',
+]))
 const loading = ref(true)
 const saving = ref(false)
 const settings = ref({})
@@ -16,6 +22,7 @@ async function load() {
     const data = await apiFetch('/api/settings')
     settings.value = { ...(data.settings || {}) }
     labels.value = data.labels || {}
+    readonlyKeys.value = new Set(data.readonly_keys || [])
   } catch (error) {
     notify(`设置加载失败：${error.message}`, 'error')
   } finally {
@@ -26,7 +33,7 @@ async function load() {
 async function save() {
   saving.value = true
   try {
-    const editable = Object.fromEntries(Object.entries(settings.value).filter(([key]) => !readonlyKeys.has(key)))
+    const editable = Object.fromEntries(Object.entries(settings.value).filter(([key]) => !readonlyKeys.value.has(key)))
     const result = await apiFetch('/api/settings', { method: 'POST', body: JSON.stringify({ settings: editable }) })
     notify(result.message || '设置已保存', 'success')
     await load()
