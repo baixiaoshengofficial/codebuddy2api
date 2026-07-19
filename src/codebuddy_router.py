@@ -9,13 +9,12 @@ import logging
 import asyncio
 import copy
 import hashlib
-import math
 import re
 from typing import Optional, Dict, Any, List, AsyncGenerator
 
 import httpx
 from fastapi import APIRouter, HTTPException, Depends, Request, Header
-from fastapi.responses import StreamingResponse
+from fastapi.responses import Response, StreamingResponse
 
 from .auth import authenticate
 from .codebuddy_api_client import codebuddy_api_client
@@ -37,13 +36,15 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
-LOCAL_EMBEDDING_MODEL_ID = "codebuddy-embedding-hash"
-LOCAL_EMBEDDING_DIMENSIONS = 1536
-
 def get_codebuddy_api_url() -> str:
     """获取当前 CodeBuddy API URL，支持后台热更新站点配置。"""
     from config import get_codebuddy_api_endpoint
     return f"{get_codebuddy_api_endpoint()}/v2/chat/completions"
+
+def get_codebuddy_embeddings_url() -> str:
+    """获取当前 CodeBuddy Embeddings API URL。"""
+    from config import get_codebuddy_api_endpoint
+    return f"{get_codebuddy_api_endpoint().rstrip('/')}/v2/embeddings"
 
 # --- HTTP 客户端配置 ---
 HTTP_CLIENT_CONFIG = {
@@ -595,15 +596,6 @@ class RequestProcessor:
         if not isinstance(request_body, dict):
             raise HTTPException(status_code=400, detail="Request body must be a JSON object")
 
-        if request_body.get("model") == LOCAL_EMBEDDING_MODEL_ID:
-            raise HTTPException(
-                status_code=400,
-                detail=(
-                    f"Model '{LOCAL_EMBEDDING_MODEL_ID}' only supports embeddings. "
-                    "Use POST /codebuddy/v1/embeddings instead of chat/completions."
-                ),
-            )
-        
         messages = request_body.get("messages")
         if not messages or not isinstance(messages, list):
             raise HTTPException(status_code=400, detail="Messages field is required and must be an array")
@@ -802,102 +794,6 @@ def get_chat_output_text(response: Dict[str, Any]) -> str:
         return ""
     message = choices[0].get("message") or {}
     return str(message.get("content") or "")
-
-def normalize_embedding_input(input_value: Any) -> List[str]:
-    """Normalize OpenAI embeddings input into a list of strings."""
-    if isinstance(input_value, str):
-        return [input_value]
-
-    if isinstance(input_value, list):
-        if not input_value:
-            return []
-
-        if all(isinstance(item, int) for item in input_value):
-            return [" ".join(str(item) for item in input_value)]
-
-        normalized = []
-        for item in input_value:
-            if isinstance(item, str):
-                normalized.append(item)
-            elif isinstance(item, list) and all(isinstance(token, int) for token in item):
-                normalized.append(" ".join(str(token) for token in item))
-            elif item is not None:
-                normalized.append(str(item))
-        return normalized
-
-    if input_value is None:
-        return []
-
-    return [str(input_value)]
-
-def estimate_embedding_tokens(texts: List[str]) -> int:
-    """Return a rough token count for usage reporting."""
-    return sum(max(1, len(text) // 4) for text in texts)
-
-def extract_embedding_features(text: str) -> List[tuple]:
-    """Build weighted lexical features for multilingual similarity search."""
-    tokens = re.findall(r"[a-zA-Z0-9_]+|[\u4e00-\u9fff]|[^\s]", text.lower())
-    if not tokens:
-        return [("empty", 1.0)]
-
-    features = [(f"token:{token}", 1.0) for token in tokens]
-    features.extend(
-        (f"bigram:{left}\x1f{right}", 1.25)
-        for left, right in zip(tokens, tokens[1:])
-    )
-    features.extend(
-        (f"trigram:{first}\x1f{second}\x1f{third}", 1.5)
-        for first, second, third in zip(tokens, tokens[1:], tokens[2:])
-    )
-
-    for token in tokens:
-        if re.fullmatch(r"[a-zA-Z0-9_]+", token) and len(token) >= 3:
-            features.extend(
-                (f"char3:{token[index:index + 3]}", 0.5)
-                for index in range(len(token) - 2)
-            )
-
-    return features
-
-def apply_hadamard_transform(vector: List[float]) -> None:
-    """Apply an in-place orthogonal mixing transform to a power-of-two vector."""
-    width = 1
-    size = len(vector)
-    while width < size:
-        step = width * 2
-        for start in range(0, size, step):
-            for offset in range(width):
-                left_index = start + offset
-                right_index = left_index + width
-                left = vector[left_index]
-                right = vector[right_index]
-                vector[left_index] = left + right
-                vector[right_index] = left - right
-        width = step
-
-def create_hash_embedding(
-    text: str,
-    dimensions: int = LOCAL_EMBEDDING_DIMENSIONS,
-) -> List[float]:
-    """Create a deterministic dense embedding using hashed random projection."""
-    projection_size = 1 << (dimensions - 1).bit_length()
-    vector = [0.0] * projection_size
-
-    for feature, weight in extract_embedding_features(text):
-        digest = hashlib.sha256(feature.encode("utf-8")).digest()
-        for offset in (0, 6, 12, 18):
-            index = int.from_bytes(digest[offset:offset + 4], "big") % projection_size
-            sign = 1.0 if digest[offset + 4] & 1 else -1.0
-            magnitude = 0.75 + (digest[offset + 5] / 512.0)
-            vector[index] += sign * magnitude * weight
-
-    apply_hadamard_transform(vector)
-    vector = vector[:dimensions]
-    norm = math.sqrt(sum(value * value for value in vector))
-    if norm == 0:
-        return vector
-
-    return [round(value / norm, 8) for value in vector]
 
 def responses_input_to_messages(request_body: Dict[str, Any]) -> List[Dict[str, Any]]:
     """Convert a minimal OpenAI Responses input into chat messages."""
@@ -1180,9 +1076,14 @@ async def responses(
 @router.post("/v1/embeddings")
 async def embeddings(
     request: Request,
+    x_conversation_id: Optional[str] = Header(None, alias="X-Conversation-ID"),
+    x_conversation_request_id: Optional[str] = Header(None, alias="X-Conversation-Request-ID"),
+    x_conversation_message_id: Optional[str] = Header(None, alias="X-Conversation-Message-ID"),
+    x_request_id: Optional[str] = Header(None, alias="X-Request-ID"),
     _token: str = Depends(authenticate)
 ):
-    """OpenAI-compatible local embeddings endpoint for vector search clients."""
+    """将 OpenAI-compatible Embeddings 请求直接转发给 CodeBuddy。"""
+    audit = None
     try:
         try:
             request_body = await request.json()
@@ -1190,51 +1091,77 @@ async def embeddings(
             logger.error(f"解析Embeddings请求体失败: {e}")
             raise HTTPException(status_code=400, detail=f"Invalid JSON request body: {str(e)}")
 
-        texts = normalize_embedding_input(request_body.get("input"))
-        if not texts:
+        if not isinstance(request_body, dict):
+            raise HTTPException(status_code=400, detail="Request body must be a JSON object")
+
+        model = request_body.get("model")
+        if not isinstance(model, str) or not model.strip():
+            raise HTTPException(status_code=400, detail="Embeddings request requires a non-empty 'model' field")
+
+        input_value = request_body.get("input")
+        if input_value is None or input_value == "" or input_value == []:
             raise HTTPException(status_code=400, detail="Embeddings request requires a non-empty 'input' field")
 
-        dimensions = request_body.get("dimensions", LOCAL_EMBEDDING_DIMENSIONS)
-        try:
-            dimensions = int(dimensions)
-        except (TypeError, ValueError):
-            raise HTTPException(status_code=400, detail="dimensions must be an integer")
-
-        if dimensions <= 0 or dimensions > 4096:
-            raise HTTPException(status_code=400, detail="dimensions must be between 1 and 4096")
-
-        model = request_body.get("model") or LOCAL_EMBEDDING_MODEL_ID
-        prompt_tokens = estimate_embedding_tokens(texts)
+        credential = CredentialManager.get_valid_credential()
         audit = start_request_audit(
             request,
             request_body,
             endpoint="/codebuddy/v1/embeddings",
             model=model,
+            credential=credential,
+        )
+        headers = codebuddy_api_client.generate_codebuddy_headers(
+            bearer_token=credential.get("bearer_token"),
+            user_id=credential.get("user_id"),
+            conversation_id=x_conversation_id,
+            conversation_request_id=x_conversation_request_id,
+            conversation_message_id=x_conversation_message_id,
+            request_id=x_request_id or audit["request_id"],
         )
         usage_stats_manager.record_model_usage(model)
 
-        response = {
-            "object": "list",
-            "data": [
-                {
-                    "object": "embedding",
-                    "index": index,
-                    "embedding": create_hash_embedding(text, dimensions),
-                }
-                for index, text in enumerate(texts)
-            ],
-            "model": model,
-            "usage": {
-                "prompt_tokens": prompt_tokens,
-                "total_tokens": prompt_tokens,
-            },
-        }
-        finish_request_audit(audit, status_code=200, usage=response["usage"])
-        return response
+        client = await get_http_client()
+        upstream = await client.post(
+            get_codebuddy_embeddings_url(),
+            json=request_body,
+            headers=headers,
+        )
+        try:
+            response_body = upstream.json()
+        except ValueError:
+            response_body = None
 
-    except HTTPException:
+        usage = response_body.get("usage") if isinstance(response_body, dict) else None
+        error = None if upstream.is_success else upstream.text
+        finish_request_audit(
+            audit,
+            status_code=upstream.status_code,
+            usage=usage,
+            error=error,
+        )
+
+        content_type = upstream.headers.get("content-type", "application/json").split(";", 1)[0]
+        return Response(
+            content=upstream.content,
+            status_code=upstream.status_code,
+            media_type=content_type,
+        )
+
+    except httpx.TimeoutException:
+        if audit:
+            finish_request_audit(audit, 504, error="CodeBuddy Embeddings API timeout")
+        raise HTTPException(status_code=504, detail="CodeBuddy Embeddings API timeout")
+    except httpx.NetworkError as e:
+        if audit:
+            finish_request_audit(audit, 502, error=str(e))
+        raise HTTPException(status_code=502, detail=f"Network error: {str(e)}")
+    except HTTPException as e:
+        if audit:
+            finish_request_audit(audit, e.status_code, error=str(e.detail))
         raise
     except Exception as e:
+        if audit:
+            finish_request_audit(audit, 500, error=str(e))
         logger.error(f"Embeddings API错误: {e}")
         raise HTTPException(status_code=500, detail=f"内部服务器错误: {str(e)}")
 
@@ -1242,24 +1169,15 @@ async def embeddings(
 async def list_v1_models():
     """获取CodeBuddy V1模型列表"""
     try:
-        upstream_models = await codebuddy_model_manager.get_models()
-        models = list(dict.fromkeys([*upstream_models, LOCAL_EMBEDDING_MODEL_ID]))
+        models = list(dict.fromkeys(await codebuddy_model_manager.get_models()))
         return {
             "object": "list",
             "data": [{
                 "id": model,
                 "object": "model",
                 "created": int(time.time()),
-                "capabilities": (
-                    ["embeddings"]
-                    if model == LOCAL_EMBEDDING_MODEL_ID
-                    else ["chat.completions", "responses"]
-                ),
-                "owned_by": (
-                    "codebuddy2api"
-                    if model == LOCAL_EMBEDDING_MODEL_ID
-                    else "codebuddy"
-                )
+                "capabilities": ["chat.completions", "responses"],
+                "owned_by": "codebuddy"
             } for model in models]
         }
         

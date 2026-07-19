@@ -9,7 +9,7 @@ const model = ref('')
 const requestMode = ref('chat')
 const message = ref('你好，请介绍一下自己。')
 const stream = ref(true)
-const dimensions = ref(1536)
+const dimensions = ref('')
 const running = ref(false)
 const result = ref('')
 const codeMode = ref('curl')
@@ -25,17 +25,24 @@ const endpointPath = computed(() => requestMode.value === 'embeddings'
   ? '/codebuddy/v1/embeddings'
   : '/codebuddy/v1/chat/completions')
 const endpoint = computed(() => `${window.location.origin}${endpointPath.value}`)
-const requestBody = computed(() => requestMode.value === 'embeddings'
-  ? {
-      model: model.value || 'codebuddy-embedding-hash',
+const requestBody = computed(() => {
+  if (requestMode.value === 'embeddings') {
+    const body = {
+      model: model.value,
       input: message.value,
-      dimensions: Number(dimensions.value) || 1536,
     }
-  : {
-      model: model.value || 'glm-5.2',
-      messages: [{ role: 'user', content: message.value }],
-      stream: stream.value,
-    })
+    const requestedDimensions = Number(dimensions.value)
+    if (dimensions.value !== '' && Number.isInteger(requestedDimensions) && requestedDimensions > 0) {
+      body.dimensions = requestedDimensions
+    }
+    return body
+  }
+  return {
+    model: model.value || 'glm-5.2',
+    messages: [{ role: 'user', content: message.value }],
+    stream: stream.value,
+  }
+})
 
 const curlExample = computed(() => `curl ${endpoint.value} \\
   -H "Authorization: Bearer YOUR_PASSWORD" \\
@@ -53,8 +60,8 @@ client = OpenAI(
 
 response = client.embeddings.create(
     model="${requestBody.value.model}",
-    input=${JSON.stringify(message.value)},
-    dimensions=${requestBody.value.dimensions},
+    input=${JSON.stringify(message.value)},${requestBody.value.dimensions ? `
+    dimensions=${requestBody.value.dimensions},` : ''}
 )
 print(response.data[0].embedding)` : `from openai import OpenAI
 
@@ -158,9 +165,10 @@ onMounted(loadModels)
           <button :class="{ active: requestMode === 'chat' }" @click="selectMode('chat')">聊天</button>
           <button :class="{ active: requestMode === 'embeddings' }" @click="selectMode('embeddings')">向量</button>
         </div>
-        <label>模型<select v-model="model"><option v-for="item in availableModels" :key="item">{{ item }}</option></select></label>
+        <label v-if="requestMode === 'embeddings'">模型<input v-model.trim="model" placeholder="CodeBuddy embedding 模型 ID" /></label>
+        <label v-else>模型<select v-model="model"><option v-for="item in availableModels" :key="item">{{ item }}</option></select></label>
         <label>{{ requestMode === 'embeddings' ? '输入文本' : '消息' }}<textarea v-model="message" rows="8" /></label>
-        <label v-if="requestMode === 'embeddings'">向量维度<input v-model.number="dimensions" type="number" min="1" max="4096" step="1" /></label>
+        <label v-if="requestMode === 'embeddings'">向量维度（可选）<input v-model.number="dimensions" type="number" min="1" step="1" placeholder="由模型决定" /></label>
         <label v-else class="switch-row">
           <span><strong>流式响应</strong><small>使用 Server-Sent Events</small></span>
           <input v-model="stream" type="checkbox" role="switch" />

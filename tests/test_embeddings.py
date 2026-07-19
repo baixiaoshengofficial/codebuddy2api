@@ -1,19 +1,10 @@
-import math
 import unittest
 from unittest.mock import AsyncMock, patch
 
 import httpx
 from fastapi import FastAPI
 
-from src.codebuddy_router import (
-    LOCAL_EMBEDDING_MODEL_ID,
-    create_hash_embedding,
-    router,
-)
-
-
-def cosine_similarity(left, right):
-    return sum(a * b for a, b in zip(left, right))
+from src.codebuddy_router import router
 
 
 class EmbeddingsEndpointTests(unittest.IsolatedAsyncioTestCase):
@@ -29,47 +20,53 @@ class EmbeddingsEndpointTests(unittest.IsolatedAsyncioTestCase):
         ) as client:
             return await client.request(method, path, **kwargs)
 
-    async def test_models_advertise_local_embedding_model_once(self):
-        upstream = ["L1", LOCAL_EMBEDDING_MODEL_ID]
+    async def test_models_only_advertise_discovered_codebuddy_models(self):
         with patch(
             "src.codebuddy_router.codebuddy_model_manager.get_models",
-            new=AsyncMock(return_value=upstream),
+            new=AsyncMock(return_value=["glm-5.2", "glm-5.2"]),
         ):
             response = await self.request("GET", "/codebuddy/v1/models")
 
         self.assertEqual(response.status_code, 200)
-        models = response.json()["data"]
-        matching = [item for item in models if item["id"] == LOCAL_EMBEDDING_MODEL_ID]
-        self.assertEqual(len(matching), 1)
-        self.assertEqual(matching[0]["owned_by"], "codebuddy2api")
-        self.assertEqual(matching[0]["capabilities"], ["embeddings"])
+        self.assertEqual(response.json()["data"], [{
+            "id": "glm-5.2",
+            "object": "model",
+            "created": response.json()["data"][0]["created"],
+            "capabilities": ["chat.completions", "responses"],
+            "owned_by": "codebuddy",
+        }])
 
-    async def test_embedding_model_is_rejected_by_chat_endpoint(self):
-        with patch("src.auth.get_server_password", return_value="test-password"):
-            response = await self.request(
-                "POST",
-                "/codebuddy/v1/chat/completions",
-                headers={"Authorization": "Bearer test-password"},
-                json={
-                    "model": LOCAL_EMBEDDING_MODEL_ID,
-                    "messages": [{"role": "user", "content": "test"}],
-                },
-            )
-
-        self.assertEqual(response.status_code, 400)
-        self.assertIn("/codebuddy/v1/embeddings", response.json()["detail"])
-
-    async def test_embeddings_return_openai_compatible_batch(self):
+    async def test_embeddings_are_forwarded_to_codebuddy(self):
         payload = {
-            "model": LOCAL_EMBEDDING_MODEL_ID,
-            "input": ["相同文本", "相同文本"],
-            "dimensions": 8,
+            "model": "upstream-embedding-model",
+            "input": ["第一段", "第二段"],
+            "dimensions": 1024,
         }
+        upstream_body = {
+            "object": "list",
+            "data": [{"object": "embedding", "index": 0, "embedding": [0.1, -0.2]}],
+            "model": "upstream-embedding-model",
+            "usage": {"prompt_tokens": 4, "total_tokens": 4},
+        }
+        upstream = httpx.Response(200, json=upstream_body)
+        client = AsyncMock()
+        client.post.return_value = upstream
+        credential = {
+            "bearer_token": "codebuddy-token",
+            "user_id": "codebuddy-user",
+            "_credential_filename": "credential.json",
+        }
+        generated_headers = {"Authorization": "Bearer codebuddy-token"}
+
         with (
             patch("src.auth.get_server_password", return_value="test-password"),
-            patch("src.codebuddy_router.start_request_audit", return_value={}),
-            patch("src.codebuddy_router.finish_request_audit"),
-            patch("src.codebuddy_router.usage_stats_manager.record_model_usage"),
+            patch("src.codebuddy_router.CredentialManager.get_valid_credential", return_value=credential),
+            patch("src.codebuddy_router.get_http_client", new=AsyncMock(return_value=client)),
+            patch("src.codebuddy_router.get_codebuddy_embeddings_url", return_value="https://copilot.tencent.com/v2/embeddings"),
+            patch("src.codebuddy_router.codebuddy_api_client.generate_codebuddy_headers", return_value=generated_headers) as generate_headers,
+            patch("src.codebuddy_router.start_request_audit", return_value={"request_id": "audit-request"}),
+            patch("src.codebuddy_router.finish_request_audit") as finish_audit,
+            patch("src.codebuddy_router.usage_stats_manager.record_model_usage") as record_usage,
         ):
             response = await self.request(
                 "POST",
@@ -79,53 +76,77 @@ class EmbeddingsEndpointTests(unittest.IsolatedAsyncioTestCase):
             )
 
         self.assertEqual(response.status_code, 200)
-        body = response.json()
-        self.assertEqual(body["object"], "list")
-        self.assertEqual(body["model"], LOCAL_EMBEDDING_MODEL_ID)
-        self.assertEqual(len(body["data"]), 2)
-        self.assertEqual(body["data"][0]["embedding"], body["data"][1]["embedding"])
-        self.assertEqual(len(body["data"][0]["embedding"]), 8)
-        norm = math.sqrt(sum(value * value for value in body["data"][0]["embedding"]))
-        self.assertAlmostEqual(norm, 1.0, places=5)
-        self.assertGreater(body["usage"]["prompt_tokens"], 0)
+        self.assertEqual(response.json(), upstream_body)
+        client.post.assert_awaited_once_with(
+            "https://copilot.tencent.com/v2/embeddings",
+            json=payload,
+            headers=generated_headers,
+        )
+        generate_headers.assert_called_once_with(
+            bearer_token="codebuddy-token",
+            user_id="codebuddy-user",
+            conversation_id=None,
+            conversation_request_id=None,
+            conversation_message_id=None,
+            request_id="audit-request",
+        )
+        record_usage.assert_called_once_with("upstream-embedding-model")
+        self.assertEqual(finish_audit.call_args.kwargs["status_code"], 200)
+        self.assertEqual(finish_audit.call_args.kwargs["usage"], upstream_body["usage"])
+
+    async def test_upstream_embedding_error_is_returned_unchanged(self):
+        error_body = {
+            "code": 11351,
+            "msg": "embedding model [missing] not found",
+            "requestId": "upstream-request",
+        }
+        client = AsyncMock()
+        client.post.return_value = httpx.Response(500, json=error_body)
+
+        with (
+            patch("src.auth.get_server_password", return_value="test-password"),
+            patch(
+                "src.codebuddy_router.CredentialManager.get_valid_credential",
+                return_value={"bearer_token": "token", "user_id": "user"},
+            ),
+            patch("src.codebuddy_router.get_http_client", new=AsyncMock(return_value=client)),
+            patch("src.codebuddy_router.codebuddy_api_client.generate_codebuddy_headers", return_value={}),
+            patch("src.codebuddy_router.start_request_audit", return_value={"request_id": "request"}),
+            patch("src.codebuddy_router.finish_request_audit") as finish_audit,
+            patch("src.codebuddy_router.usage_stats_manager.record_model_usage"),
+        ):
+            response = await self.request(
+                "POST",
+                "/codebuddy/v1/embeddings",
+                headers={"Authorization": "Bearer test-password"},
+                json={"model": "missing", "input": "test"},
+            )
+
+        self.assertEqual(response.status_code, 500)
+        self.assertEqual(response.json(), error_body)
+        self.assertEqual(finish_audit.call_args.kwargs["status_code"], 500)
+        self.assertIn("embedding model", finish_audit.call_args.kwargs["error"])
 
     async def test_embeddings_require_authentication(self):
         response = await self.request(
             "POST",
             "/codebuddy/v1/embeddings",
-            json={"input": "test"},
+            json={"model": "test", "input": "test"},
         )
 
         self.assertEqual(response.status_code, 403)
 
-    async def test_embeddings_reject_invalid_dimensions(self):
+    async def test_embeddings_require_model(self):
         with patch("src.auth.get_server_password", return_value="test-password"):
             response = await self.request(
                 "POST",
                 "/codebuddy/v1/embeddings",
                 headers={"Authorization": "Bearer test-password"},
-                json={"input": "test", "dimensions": 0},
+                json={"input": "test"},
             )
 
         self.assertEqual(response.status_code, 400)
-        self.assertIn("dimensions", response.json()["detail"])
-
-    def test_default_embedding_is_dense(self):
-        vector = create_hash_embedding("苹果手机保护壳")
-        non_zero = sum(abs(value) > 1e-12 for value in vector)
-
-        self.assertEqual(len(vector), 1536)
-        self.assertGreater(non_zero / len(vector), 0.99)
-
-    def test_related_texts_are_closer_than_unrelated_texts(self):
-        anchor = create_hash_embedding("苹果手机保护壳")
-        related = create_hash_embedding("苹果手机壳")
-        unrelated = create_hash_embedding("数据库索引优化")
-
-        self.assertGreater(
-            cosine_similarity(anchor, related),
-            cosine_similarity(anchor, unrelated),
-        )
+        self.assertIn("model", response.json()["detail"])
 
 
 if __name__ == "__main__":

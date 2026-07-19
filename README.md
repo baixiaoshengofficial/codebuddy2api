@@ -183,7 +183,7 @@ curl -sS -X POST 'http://192.168.100.3:8001/codebuddy/v1/chat/completions' \
 - `GET /codebuddy/v1/responses`: 轻量探测接口，供 cc-switch 等工具测速。
 - `POST /codebuddy/v1/responses`: 最小 Responses 兼容接口，用于 Codex/cc-switch 连通性探测和简单请求。
 - `GET /codebuddy/v1/embeddings`: 轻量探测接口，供向量查询客户端测速。
-- `POST /codebuddy/v1/embeddings`: OpenAI 兼容 Embeddings 接口，使用本地确定性稠密 Hash 随机投影，适合向量库连通和基础词法相似度检索。它不是 CodeBuddy 官方或神经网络语义模型；建库和查询必须使用相同维度，算法升级后需要重建已有向量索引。
+- `POST /codebuddy/v1/embeddings`: OpenAI 兼容 Embeddings 透传接口，请求会使用轮询选中的 CodeBuddy 凭证直接调用官方 `/v2/embeddings`，不会在本地生成或修改向量。`model` 必须填写 CodeBuddy 已为账号开放的 embedding 模型 ID；若账号未开放模型，接口会原样返回 CodeBuddy 的错误响应（目前中国站个人账号可能返回 `11351: embedding model [...] not found`）。
 - `GET /codebuddy/v1/credentials`: （需要认证）在 Web UI 中用于列出所有凭证。
 - `POST /codebuddy/v1/credentials`: （需要认证）在 Web UI 中用于添加新凭证。
 - `GET /api/checkin`: （需要认证）查看自动签到计划及逐账号状态。
