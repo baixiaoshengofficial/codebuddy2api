@@ -343,6 +343,8 @@ textarea { resize: vertical; line-height: 1.5; }
 .form-section > p { margin-top: 14px; margin-bottom: 14px; font-size: 0.82rem; }
 .form-section > label { display: flex; flex-direction: column; gap: 7px; margin-top: 14px; color: var(--muted); font-size: 0.75rem; font-weight: 650; }
 .form-section > .button { margin-top: 16px; }
+.request-mode-control { margin-top: 14px; }
+.request-mode-control button { min-width: 88px; }
 .auth-link-box { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; gap: 6px; margin-top: 14px; }
 .auth-link-box input { min-width: 0; }
 .auth-link-box a { color: var(--text); text-decoration: none; }

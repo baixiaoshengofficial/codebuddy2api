@@ -34,6 +34,22 @@ class EmbeddingsEndpointTests(unittest.IsolatedAsyncioTestCase):
         matching = [item for item in models if item["id"] == LOCAL_EMBEDDING_MODEL_ID]
         self.assertEqual(len(matching), 1)
         self.assertEqual(matching[0]["owned_by"], "codebuddy2api")
+        self.assertEqual(matching[0]["capabilities"], ["embeddings"])
+
+    async def test_embedding_model_is_rejected_by_chat_endpoint(self):
+        with patch("src.auth.get_server_password", return_value="test-password"):
+            response = await self.request(
+                "POST",
+                "/codebuddy/v1/chat/completions",
+                headers={"Authorization": "Bearer test-password"},
+                json={
+                    "model": LOCAL_EMBEDDING_MODEL_ID,
+                    "messages": [{"role": "user", "content": "test"}],
+                },
+            )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("/codebuddy/v1/embeddings", response.json()["detail"])
 
     async def test_embeddings_return_openai_compatible_batch(self):
         payload = {

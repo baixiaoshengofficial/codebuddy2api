@@ -594,6 +594,15 @@ class RequestProcessor:
         """验证请求参数"""
         if not isinstance(request_body, dict):
             raise HTTPException(status_code=400, detail="Request body must be a JSON object")
+
+        if request_body.get("model") == LOCAL_EMBEDDING_MODEL_ID:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f"Model '{LOCAL_EMBEDDING_MODEL_ID}' only supports embeddings. "
+                    "Use POST /codebuddy/v1/embeddings instead of chat/completions."
+                ),
+            )
         
         messages = request_body.get("messages")
         if not messages or not isinstance(messages, list):
@@ -1058,6 +1067,7 @@ async def responses(
         response_id = f"resp_{uuid.uuid4().hex}"
         client_wants_stream = request_body.get("stream", False)
         chat_request = responses_request_to_chat_request(request_body)
+        RequestProcessor.validate_request(chat_request)
 
         credential = CredentialManager.get_valid_credential()
         payload = RequestProcessor.prepare_payload(chat_request)
@@ -1197,6 +1207,11 @@ async def list_v1_models():
                 "id": model,
                 "object": "model",
                 "created": int(time.time()),
+                "capabilities": (
+                    ["embeddings"]
+                    if model == LOCAL_EMBEDDING_MODEL_ID
+                    else ["chat.completions", "responses"]
+                ),
                 "owned_by": (
                     "codebuddy2api"
                     if model == LOCAL_EMBEDDING_MODEL_ID
