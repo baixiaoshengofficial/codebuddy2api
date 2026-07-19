@@ -834,27 +834,70 @@ def estimate_embedding_tokens(texts: List[str]) -> int:
     """Return a rough token count for usage reporting."""
     return sum(max(1, len(text) // 4) for text in texts)
 
+def extract_embedding_features(text: str) -> List[tuple]:
+    """Build weighted lexical features for multilingual similarity search."""
+    tokens = re.findall(r"[a-zA-Z0-9_]+|[\u4e00-\u9fff]|[^\s]", text.lower())
+    if not tokens:
+        return [("empty", 1.0)]
+
+    features = [(f"token:{token}", 1.0) for token in tokens]
+    features.extend(
+        (f"bigram:{left}\x1f{right}", 1.25)
+        for left, right in zip(tokens, tokens[1:])
+    )
+    features.extend(
+        (f"trigram:{first}\x1f{second}\x1f{third}", 1.5)
+        for first, second, third in zip(tokens, tokens[1:], tokens[2:])
+    )
+
+    for token in tokens:
+        if re.fullmatch(r"[a-zA-Z0-9_]+", token) and len(token) >= 3:
+            features.extend(
+                (f"char3:{token[index:index + 3]}", 0.5)
+                for index in range(len(token) - 2)
+            )
+
+    return features
+
+def apply_hadamard_transform(vector: List[float]) -> None:
+    """Apply an in-place orthogonal mixing transform to a power-of-two vector."""
+    width = 1
+    size = len(vector)
+    while width < size:
+        step = width * 2
+        for start in range(0, size, step):
+            for offset in range(width):
+                left_index = start + offset
+                right_index = left_index + width
+                left = vector[left_index]
+                right = vector[right_index]
+                vector[left_index] = left + right
+                vector[right_index] = left - right
+        width = step
+
 def create_hash_embedding(
     text: str,
     dimensions: int = LOCAL_EMBEDDING_DIMENSIONS,
 ) -> List[float]:
-    """Create a deterministic local embedding using feature hashing."""
-    tokens = re.findall(r"[a-zA-Z0-9_]+|[\u4e00-\u9fff]|[^\s]", text.lower())
-    if not tokens:
-        tokens = [""]
+    """Create a deterministic dense embedding using hashed random projection."""
+    projection_size = 1 << (dimensions - 1).bit_length()
+    vector = [0.0] * projection_size
 
-    vector = [0.0] * dimensions
-    for token in tokens:
-        digest = hashlib.sha256(token.encode("utf-8")).digest()
-        index = int.from_bytes(digest[:4], "big") % dimensions
-        sign = 1.0 if digest[4] & 1 else -1.0
-        vector[index] += sign
+    for feature, weight in extract_embedding_features(text):
+        digest = hashlib.sha256(feature.encode("utf-8")).digest()
+        for offset in (0, 6, 12, 18):
+            index = int.from_bytes(digest[offset:offset + 4], "big") % projection_size
+            sign = 1.0 if digest[offset + 4] & 1 else -1.0
+            magnitude = 0.75 + (digest[offset + 5] / 512.0)
+            vector[index] += sign * magnitude * weight
 
+    apply_hadamard_transform(vector)
+    vector = vector[:dimensions]
     norm = math.sqrt(sum(value * value for value in vector))
     if norm == 0:
         return vector
 
-    return [round(value / norm, 6) for value in vector]
+    return [round(value / norm, 8) for value in vector]
 
 def responses_input_to_messages(request_body: Dict[str, Any]) -> List[Dict[str, Any]]:
     """Convert a minimal OpenAI Responses input into chat messages."""

@@ -5,7 +5,15 @@ from unittest.mock import AsyncMock, patch
 import httpx
 from fastapi import FastAPI
 
-from src.codebuddy_router import LOCAL_EMBEDDING_MODEL_ID, router
+from src.codebuddy_router import (
+    LOCAL_EMBEDDING_MODEL_ID,
+    create_hash_embedding,
+    router,
+)
+
+
+def cosine_similarity(left, right):
+    return sum(a * b for a, b in zip(left, right))
 
 
 class EmbeddingsEndpointTests(unittest.IsolatedAsyncioTestCase):
@@ -101,6 +109,23 @@ class EmbeddingsEndpointTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(response.status_code, 400)
         self.assertIn("dimensions", response.json()["detail"])
+
+    def test_default_embedding_is_dense(self):
+        vector = create_hash_embedding("苹果手机保护壳")
+        non_zero = sum(abs(value) > 1e-12 for value in vector)
+
+        self.assertEqual(len(vector), 1536)
+        self.assertGreater(non_zero / len(vector), 0.99)
+
+    def test_related_texts_are_closer_than_unrelated_texts(self):
+        anchor = create_hash_embedding("苹果手机保护壳")
+        related = create_hash_embedding("苹果手机壳")
+        unrelated = create_hash_embedding("数据库索引优化")
+
+        self.assertGreater(
+            cosine_similarity(anchor, related),
+            cosine_similarity(anchor, unrelated),
+        )
 
 
 if __name__ == "__main__":
