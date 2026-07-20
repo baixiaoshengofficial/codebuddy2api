@@ -14,7 +14,7 @@ from typing import Optional, Dict, Any, List, AsyncGenerator
 
 import httpx
 from fastapi import APIRouter, HTTPException, Depends, Request, Header
-from fastapi.responses import Response, StreamingResponse
+from fastapi.responses import StreamingResponse
 
 from .auth import authenticate
 from .codebuddy_api_client import codebuddy_api_client
@@ -40,11 +40,6 @@ def get_codebuddy_api_url() -> str:
     """获取当前 CodeBuddy API URL，支持后台热更新站点配置。"""
     from config import get_codebuddy_api_endpoint
     return f"{get_codebuddy_api_endpoint()}/v2/chat/completions"
-
-def get_codebuddy_embeddings_url() -> str:
-    """获取当前 CodeBuddy Embeddings API URL。"""
-    from config import get_codebuddy_api_endpoint
-    return f"{get_codebuddy_api_endpoint().rstrip('/')}/v2/embeddings"
 
 # --- HTTP 客户端配置 ---
 HTTP_CLIENT_CONFIG = {
@@ -906,11 +901,6 @@ async def responses_probe():
     """轻量 Responses 端点探测，供 cc-switch/Codex 等工具测速。"""
     return create_endpoint_probe("/codebuddy/v1/responses")
 
-@router.get("/v1/embeddings")
-async def embeddings_probe():
-    """轻量 Embeddings 端点探测，供向量查询客户端测速。"""
-    return create_endpoint_probe("/codebuddy/v1/embeddings")
-
 @router.post("/v1/chat/completions")
 async def chat_completions(
     request: Request,
@@ -1071,98 +1061,6 @@ async def responses(
         raise
     except Exception as e:
         logger.error(f"Responses API错误: {e}")
-        raise HTTPException(status_code=500, detail=f"内部服务器错误: {str(e)}")
-
-@router.post("/v1/embeddings")
-async def embeddings(
-    request: Request,
-    x_conversation_id: Optional[str] = Header(None, alias="X-Conversation-ID"),
-    x_conversation_request_id: Optional[str] = Header(None, alias="X-Conversation-Request-ID"),
-    x_conversation_message_id: Optional[str] = Header(None, alias="X-Conversation-Message-ID"),
-    x_request_id: Optional[str] = Header(None, alias="X-Request-ID"),
-    _token: str = Depends(authenticate)
-):
-    """将 OpenAI-compatible Embeddings 请求直接转发给 CodeBuddy。"""
-    audit = None
-    try:
-        try:
-            request_body = await request.json()
-        except Exception as e:
-            logger.error(f"解析Embeddings请求体失败: {e}")
-            raise HTTPException(status_code=400, detail=f"Invalid JSON request body: {str(e)}")
-
-        if not isinstance(request_body, dict):
-            raise HTTPException(status_code=400, detail="Request body must be a JSON object")
-
-        model = request_body.get("model")
-        if not isinstance(model, str) or not model.strip():
-            raise HTTPException(status_code=400, detail="Embeddings request requires a non-empty 'model' field")
-
-        input_value = request_body.get("input")
-        if input_value is None or input_value == "" or input_value == []:
-            raise HTTPException(status_code=400, detail="Embeddings request requires a non-empty 'input' field")
-
-        credential = CredentialManager.get_valid_credential()
-        audit = start_request_audit(
-            request,
-            request_body,
-            endpoint="/codebuddy/v1/embeddings",
-            model=model,
-            credential=credential,
-        )
-        headers = codebuddy_api_client.generate_codebuddy_headers(
-            bearer_token=credential.get("bearer_token"),
-            user_id=credential.get("user_id"),
-            conversation_id=x_conversation_id,
-            conversation_request_id=x_conversation_request_id,
-            conversation_message_id=x_conversation_message_id,
-            request_id=x_request_id or audit["request_id"],
-        )
-        usage_stats_manager.record_model_usage(model)
-
-        client = await get_http_client()
-        upstream = await client.post(
-            get_codebuddy_embeddings_url(),
-            json=request_body,
-            headers=headers,
-        )
-        try:
-            response_body = upstream.json()
-        except ValueError:
-            response_body = None
-
-        usage = response_body.get("usage") if isinstance(response_body, dict) else None
-        error = None if upstream.is_success else upstream.text
-        finish_request_audit(
-            audit,
-            status_code=upstream.status_code,
-            usage=usage,
-            error=error,
-        )
-
-        content_type = upstream.headers.get("content-type", "application/json").split(";", 1)[0]
-        return Response(
-            content=upstream.content,
-            status_code=upstream.status_code,
-            media_type=content_type,
-        )
-
-    except httpx.TimeoutException:
-        if audit:
-            finish_request_audit(audit, 504, error="CodeBuddy Embeddings API timeout")
-        raise HTTPException(status_code=504, detail="CodeBuddy Embeddings API timeout")
-    except httpx.NetworkError as e:
-        if audit:
-            finish_request_audit(audit, 502, error=str(e))
-        raise HTTPException(status_code=502, detail=f"Network error: {str(e)}")
-    except HTTPException as e:
-        if audit:
-            finish_request_audit(audit, e.status_code, error=str(e.detail))
-        raise
-    except Exception as e:
-        if audit:
-            finish_request_audit(audit, 500, error=str(e))
-        logger.error(f"Embeddings API错误: {e}")
         raise HTTPException(status_code=500, detail=f"内部服务器错误: {str(e)}")
 
 @router.get("/v1/models")

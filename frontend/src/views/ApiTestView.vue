@@ -6,43 +6,20 @@ import { notify } from '../lib/notify'
 
 const models = ref([])
 const model = ref('')
-const requestMode = ref('chat')
 const message = ref('你好，请介绍一下自己。')
 const stream = ref(true)
-const dimensions = ref('')
 const running = ref(false)
 const result = ref('')
 const codeMode = ref('curl')
 
-const embeddingModels = computed(() => models.value
-  .filter((item) => item.capabilities?.includes('embeddings') || item.owned_by === 'codebuddy2api')
-  .map((item) => item.id))
-const chatModels = computed(() => models.value
-  .filter((item) => !item.capabilities?.includes('embeddings') && item.owned_by !== 'codebuddy2api')
-  .map((item) => item.id))
-const availableModels = computed(() => requestMode.value === 'embeddings' ? embeddingModels.value : chatModels.value)
-const endpointPath = computed(() => requestMode.value === 'embeddings'
-  ? '/codebuddy/v1/embeddings'
-  : '/codebuddy/v1/chat/completions')
-const endpoint = computed(() => `${window.location.origin}${endpointPath.value}`)
-const requestBody = computed(() => {
-  if (requestMode.value === 'embeddings') {
-    const body = {
-      model: model.value,
-      input: message.value,
-    }
-    const requestedDimensions = Number(dimensions.value)
-    if (dimensions.value !== '' && Number.isInteger(requestedDimensions) && requestedDimensions > 0) {
-      body.dimensions = requestedDimensions
-    }
-    return body
-  }
-  return {
-    model: model.value || 'glm-5.2',
-    messages: [{ role: 'user', content: message.value }],
-    stream: stream.value,
-  }
-})
+const availableModels = computed(() => models.value.map((item) => item.id))
+const endpointPath = '/codebuddy/v1/chat/completions'
+const endpoint = computed(() => `${window.location.origin}${endpointPath}`)
+const requestBody = computed(() => ({
+  model: model.value || 'glm-5.2',
+  messages: [{ role: 'user', content: message.value }],
+  stream: stream.value,
+}))
 
 const curlExample = computed(() => `curl ${endpoint.value} \\
   -H "Authorization: Bearer YOUR_PASSWORD" \\
@@ -50,20 +27,7 @@ const curlExample = computed(() => `curl ${endpoint.value} \\
   -H "X-Client-Name: My Client" \\
   -d '${JSON.stringify(requestBody.value).replace(/'/g, `'"'"'`)}'`)
 
-const pythonExample = computed(() => requestMode.value === 'embeddings' ? `from openai import OpenAI
-
-client = OpenAI(
-    api_key="YOUR_PASSWORD",
-    base_url="${window.location.origin}/codebuddy/v1",
-    default_headers={"X-Client-Name": "My Client"},
-)
-
-response = client.embeddings.create(
-    model="${requestBody.value.model}",
-    input=${JSON.stringify(message.value)},${requestBody.value.dimensions ? `
-    dimensions=${requestBody.value.dimensions},` : ''}
-)
-print(response.data[0].embedding)` : `from openai import OpenAI
+const pythonExample = computed(() => `from openai import OpenAI
 
 client = OpenAI(
     api_key="YOUR_PASSWORD",
@@ -89,10 +53,6 @@ async function loadModels() {
   }
 }
 
-function selectMode(mode) {
-  requestMode.value = mode
-}
-
 watch(availableModels, (items) => {
   if (!items.includes(model.value)) model.value = items[0] || ''
 }, { immediate: true })
@@ -101,7 +61,7 @@ async function runTest() {
   running.value = true
   result.value = ''
   try {
-    const response = await fetch(endpointPath.value, {
+    const response = await fetch(endpointPath, {
       method: 'POST',
       headers: authHeaders({ 'X-Client-Name': 'Admin Console' }),
       body: JSON.stringify(requestBody.value),
@@ -110,7 +70,7 @@ async function runTest() {
       const body = await response.json().catch(() => ({}))
       throw new Error(body.detail || body.error?.message || `HTTP ${response.status}`)
     }
-    if (requestMode.value === 'embeddings' || !stream.value) {
+    if (!stream.value) {
       result.value = JSON.stringify(await response.json(), null, 2)
     } else {
       const reader = response.body.getReader()
@@ -161,15 +121,9 @@ onMounted(loadModels)
     <div class="api-test-grid">
       <section class="data-section form-section">
         <header><h3>请求</h3><Terminal :size="18" /></header>
-        <div class="segmented-control request-mode-control">
-          <button :class="{ active: requestMode === 'chat' }" @click="selectMode('chat')">聊天</button>
-          <button :class="{ active: requestMode === 'embeddings' }" @click="selectMode('embeddings')">向量</button>
-        </div>
-        <label v-if="requestMode === 'embeddings'">模型<input v-model.trim="model" placeholder="CodeBuddy embedding 模型 ID" /></label>
-        <label v-else>模型<select v-model="model"><option v-for="item in availableModels" :key="item">{{ item }}</option></select></label>
-        <label>{{ requestMode === 'embeddings' ? '输入文本' : '消息' }}<textarea v-model="message" rows="8" /></label>
-        <label v-if="requestMode === 'embeddings'">向量维度（可选）<input v-model.number="dimensions" type="number" min="1" step="1" placeholder="由模型决定" /></label>
-        <label v-else class="switch-row">
+        <label>模型<select v-model="model"><option v-for="item in availableModels" :key="item">{{ item }}</option></select></label>
+        <label>消息<textarea v-model="message" rows="8" /></label>
+        <label class="switch-row">
           <span><strong>流式响应</strong><small>使用 Server-Sent Events</small></span>
           <input v-model="stream" type="checkbox" role="switch" />
         </label>
