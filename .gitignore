@@ -104,8 +104,9 @@ celerybeat.pid
 # Environments
 .env
 config.json
-config/*.db
-config/*.db-*
+# Runtime configuration, request logs, and check-in state may contain
+# account-related or operational data. Keep the entire directory local.
+config/
 .venv
 env/
 venv/
