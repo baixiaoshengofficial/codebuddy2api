@@ -12,23 +12,18 @@ import {
   LoaderCircle,
   Pause,
   Play,
-  Plus,
   RefreshCw,
-  RotateCcw,
   ShieldCheck,
   Trash2,
 } from '@lucide/vue'
 import { apiFetch, copyText, isOAuthPendingError } from '../lib/api'
 import { notify } from '../lib/notify'
 
-const mode = ref('list')
 const loading = ref(true)
 const busy = ref(false)
 const credentials = ref([])
 const current = ref({ status: 'unknown', index: -1 })
 const models = ref([])
-const token = ref('')
-const userId = ref('')
 const authUrl = ref('')
 const authState = ref('')
 const authPending = ref(false)
@@ -44,7 +39,6 @@ let checkinPollTimer
 
 const currentLabel = computed(() => {
   const labels = {
-    manual_selected: '手动选择模式',
     auto_rotation_disabled: '自动轮换已关闭',
     rotation_count_zero: '轮换频率为 0',
     auto_rotation: '自动轮换中',
@@ -54,7 +48,6 @@ const currentLabel = computed(() => {
 })
 
 const rotationAction = computed(() => {
-  if (current.value.status === 'manual_selected') return { label: '恢复自动轮换', icon: RotateCcw }
   if (current.value.auto_rotation_enabled === false) return { label: '开启自动轮换', icon: Play }
   return { label: '关闭自动轮换', icon: Pause }
 })
@@ -167,19 +160,6 @@ async function runCheckin() {
   }
 }
 
-async function selectCredential(index) {
-  busy.value = true
-  try {
-    await apiFetch('/codebuddy/v1/credentials/select', { method: 'POST', body: JSON.stringify({ index }) })
-    notify(`已切换到凭证 #${index + 1}`, 'success')
-    await load()
-  } catch (error) {
-    notify(`切换失败：${error.message}`, 'error')
-  } finally {
-    busy.value = false
-  }
-}
-
 async function deleteCredential(index) {
   if (!window.confirm(`确定删除凭证 #${index + 1}？此操作不可恢复。`)) return
   busy.value = true
@@ -197,10 +177,7 @@ async function deleteCredential(index) {
 async function toggleRotation() {
   busy.value = true
   try {
-    const path = current.value.status === 'manual_selected'
-      ? '/codebuddy/v1/credentials/auto'
-      : '/codebuddy/v1/credentials/toggle-rotation'
-    await apiFetch(path, { method: 'POST' })
+    await apiFetch('/codebuddy/v1/credentials/toggle-rotation', { method: 'POST' })
     notify('轮换状态已更新', 'success')
     await load()
   } catch (error) {
@@ -215,35 +192,14 @@ async function testCredential(index) {
   try {
     if (!models.value.length) await loadModels()
     if (!models.value.length) throw new Error('没有可用模型')
-    await apiFetch('/codebuddy/v1/credentials/select', { method: 'POST', body: JSON.stringify({ index }) })
     await apiFetch('/codebuddy/v1/chat/completions', {
       method: 'POST',
       body: JSON.stringify({ model: models.value[0], messages: [{ role: 'user', content: 'test' }], max_tokens: 1 }),
     })
-    notify(`凭证 #${index + 1} 测试成功，已设为当前凭证`, 'success')
+    notify(`凭证 #${index + 1} 测试成功`, 'success')
     await load()
   } catch (error) {
     notify(`凭证测试失败：${error.message}`, 'error')
-  } finally {
-    busy.value = false
-  }
-}
-
-async function addCredential() {
-  if (!token.value.trim()) return
-  busy.value = true
-  try {
-    await apiFetch('/codebuddy/v1/credentials', {
-      method: 'POST',
-      body: JSON.stringify({ bearer_token: token.value.trim(), user_id: userId.value.trim() || undefined }),
-    })
-    token.value = ''
-    userId.value = ''
-    mode.value = 'list'
-    notify('凭证添加成功', 'success')
-    await load()
-  } catch (error) {
-    notify(`添加失败：${error.message}`, 'error')
   } finally {
     busy.value = false
   }
@@ -278,7 +234,6 @@ function pollToken() {
         stopPolling()
         authPending.value = false
         authUrl.value = ''
-        mode.value = 'list'
         notify('授权成功，凭证已保存', 'success')
         await load()
       }
@@ -298,6 +253,14 @@ function pollToken() {
 function stopPolling() {
   if (pollTimer) window.clearInterval(pollTimer)
   pollTimer = null
+}
+
+function cancelAuth() {
+  stopPolling()
+  authPending.value = false
+  authUrl.value = ''
+  authState.value = ''
+  notify('已取消 CodeBuddy 授权等待', 'success')
 }
 
 async function startWorkbuddyAuth() {
@@ -419,13 +382,15 @@ onBeforeUnmount(() => {
         <p class="eyebrow">Credential pool</p>
         <h2>凭证管理</h2>
       </div>
-      <div class="segmented-control">
-        <button :class="{ active: mode === 'list' }" @click="mode = 'list'">账号列表</button>
-        <button :class="{ active: mode === 'add' }" @click="mode = 'add'">添加账号</button>
+      <div class="toolbar-actions">
+        <button class="button secondary" :disabled="authPending" @click="startAuth">
+          <LoaderCircle v-if="authPending" class="spin" :size="16" /><ExternalLink v-else :size="16" />
+          {{ authPending ? '等待授权' : '授权 CodeBuddy' }}
+        </button>
       </div>
     </div>
 
-    <template v-if="mode === 'list'">
+    <template>
       <section class="status-strip" :class="current.status === 'auto_rotation' ? 'success' : 'warning'">
         <div>
           <ShieldCheck :size="20" />
@@ -435,6 +400,16 @@ onBeforeUnmount(() => {
           <component :is="rotationAction.icon" :size="16" />{{ rotationAction.label }}
         </button>
       </section>
+
+      <div v-if="authUrl" class="auth-link-box" style="margin: 12px 0;">
+        <input :value="authUrl" readonly />
+        <button class="icon-button compact" title="复制链接" @click="copyAuthUrl"><Clipboard :size="16" /></button>
+        <a class="icon-button compact" title="打开授权页面" :href="authUrl" target="_blank" rel="noopener"><ExternalLink :size="16" /></a>
+      </div>
+      <p v-if="authPending" class="muted" style="margin: 0 0 12px; font-size: 13px;">
+        正在轮询授权结果…请在浏览器完成登录；成功后会自动保存并刷新账号列表。
+        <button type="button" class="linkish" style="margin-left: 8px;" @click="cancelAuth">取消等待</button>
+      </p>
 
       <section class="checkin-section">
         <header>
@@ -517,7 +492,6 @@ onBeforeUnmount(() => {
           <div class="credential-meta"><span>到期时间</span><strong>{{ formatExpiry(credential) }}</strong></div>
           <div class="credential-meta"><span>剩余时间</span><strong>{{ credential.time_remaining_str || '未知' }}</strong></div>
           <div class="row-actions">
-            <button v-if="current.index !== index" class="icon-button compact" title="选择凭证" :disabled="busy" @click="selectCredential(index)"><Play :size="16" /></button>
             <button class="icon-button compact" title="测试凭证" :disabled="busy" @click="testCredential(index)"><ShieldCheck :size="16" /></button>
             <button class="icon-button compact danger" title="删除凭证" :disabled="busy" @click="deleteCredential(index)"><Trash2 :size="16" /></button>
           </div>
@@ -525,27 +499,5 @@ onBeforeUnmount(() => {
       </div>
     </template>
 
-    <div v-else class="add-credential-grid">
-      <section class="data-section form-section">
-        <header><h3>CodeBuddy 授权</h3><ExternalLink :size="18" /></header>
-        <p class="muted">通过 CodeBuddy 登录流程自动保存凭证。</p>
-        <button class="button primary" :disabled="authPending" @click="startAuth">
-          <LoaderCircle v-if="authPending" class="spin" :size="17" /><Play v-else :size="17" />
-          {{ authPending ? '等待授权' : '开始授权' }}
-        </button>
-        <div v-if="authUrl" class="auth-link-box">
-          <input :value="authUrl" readonly />
-          <button class="icon-button compact" title="复制链接" @click="copyAuthUrl"><Clipboard :size="16" /></button>
-          <a class="icon-button compact" title="打开授权页面" :href="authUrl" target="_blank" rel="noopener"><ExternalLink :size="16" /></a>
-        </div>
-      </section>
-
-      <section class="data-section form-section">
-        <header><h3>手动添加</h3><Plus :size="18" /></header>
-        <label>Bearer Token<textarea v-model="token" rows="5" placeholder="粘贴 Bearer Token"></textarea></label>
-        <label>用户 ID（可选）<input v-model="userId" placeholder="用于区分账号" /></label>
-        <button class="button primary" :disabled="busy || !token.trim()" @click="addCredential"><Plus :size="17" />添加凭证</button>
-      </section>
-    </div>
   </section>
 </template>

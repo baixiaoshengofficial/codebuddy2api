@@ -1118,66 +1118,6 @@ async def list_credentials(_token: str = Depends(authenticate)):
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@router.post("/v1/credentials", summary="Add a new credential")
-async def add_credential(
-    request: Request,
-    _token: str = Depends(authenticate)
-):
-    """添加一个新的认证凭证"""
-    try:
-        data = await request.json()
-        if not data.get("bearer_token"):
-            raise HTTPException(status_code=422, detail="bearer_token is required")
-
-        success = codebuddy_token_manager.add_credential(
-            data.get("bearer_token"),
-            data.get("user_id"),
-            data.get("filename")
-        )
-        if not success:
-            raise HTTPException(status_code=500, detail="Failed to save credential file")
-        
-        return {"message": "Credential added successfully"}
-
-    except Exception as e:
-        logger.error(f"添加凭证失败: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-@router.post("/v1/credentials/select", summary="Manually select a credential")
-async def select_credential(
-    request: Request,
-    _token: str = Depends(authenticate)
-):
-    """手动选择指定的凭证"""
-    try:
-        data = await request.json()
-        index = data.get("index")
-        if index is None:
-            raise HTTPException(status_code=422, detail="index is required")
-
-        if not codebuddy_token_manager.set_manual_credential(index):
-            raise HTTPException(status_code=400, detail="Invalid credential index")
-        
-        return {"message": f"Credential #{index + 1} selected successfully"}
-
-    except Exception as e:
-        logger.error(f"选择凭证失败: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-@router.post("/v1/credentials/auto", summary="Resume automatic credential rotation")
-async def resume_auto_rotation(_token: str = Depends(authenticate)):
-    """恢复自动凭证轮换"""
-    try:
-        codebuddy_token_manager.clear_manual_selection()
-        return {"message": "Resumed automatic credential rotation"}
-
-    except Exception as e:
-        logger.error(f"恢复自动轮换失败: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
-
-
 @router.post("/v1/credentials/toggle-rotation", summary="Toggle automatic credential rotation")
 async def toggle_auto_rotation(_token: str = Depends(authenticate)):
     """切换自动轮换开关"""
