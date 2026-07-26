@@ -37,19 +37,12 @@ let pollTimer
 let workbuddyPollTimer
 let checkinPollTimer
 
-const currentLabel = computed(() => {
-  const labels = {
-    auto_rotation_disabled: '自动轮换已关闭',
-    rotation_count_zero: '轮换频率为 0',
-    auto_rotation: '自动轮换中',
-    no_credentials: '暂无可用凭证',
-  }
-  return labels[current.value.status] || '状态未知'
-})
+const isManual = computed(() => current.value.mode === 'manual')
 
-const rotationAction = computed(() => {
-  if (current.value.auto_rotation_enabled === false) return { label: '开启自动轮换', icon: Play }
-  return { label: '关闭自动轮换', icon: Pause }
+const currentLabel = computed(() => {
+  if (current.value.status === 'no_credentials') return '暂无可用凭证'
+  if (current.value.mode === 'manual') return '手动模式 · 锁定凭证'
+  return '自动模式 · 自动轮换中'
 })
 
 const workbuddyRows = computed(() => {
@@ -174,14 +167,29 @@ async function deleteCredential(index) {
   }
 }
 
-async function toggleRotation() {
+async function switchMode(mode, index = null) {
   busy.value = true
   try {
-    await apiFetch('/codebuddy/v1/credentials/toggle-rotation', { method: 'POST' })
-    notify('轮换状态已更新', 'success')
+    const body = { mode }
+    if (mode === 'manual' && index !== null) body.index = index
+    await apiFetch('/codebuddy/v1/credentials/set-mode', { method: 'POST', body: JSON.stringify(body) })
+    notify(mode === 'manual' ? `已切换到手动模式` : '已切换到自动模式', 'success')
     await load()
   } catch (error) {
     notify(`操作失败：${error.message}`, 'error')
+  } finally {
+    busy.value = false
+  }
+}
+
+async function selectCredential(index) {
+  busy.value = true
+  try {
+    await apiFetch('/codebuddy/v1/credentials/set-mode', { method: 'POST', body: JSON.stringify({ mode: 'manual', index }) })
+    notify(`已锁定凭证 #${index + 1}`, 'success')
+    await load()
+  } catch (error) {
+    notify(`切换失败：${error.message}`, 'error')
   } finally {
     busy.value = false
   }
@@ -391,13 +399,14 @@ onBeforeUnmount(() => {
     </div>
 
     <template>
-      <section class="status-strip" :class="current.status === 'auto_rotation' ? 'success' : 'warning'">
+      <section class="status-strip" :class="current.status === 'no_credentials' ? 'warning' : 'success'">
         <div>
           <ShieldCheck :size="20" />
           <span><strong>{{ currentLabel }}</strong><small v-if="current.filename">{{ current.filename }} · {{ current.user_id || '未知用户' }}</small></span>
         </div>
-        <button class="button secondary" :disabled="busy || current.status === 'no_credentials'" @click="toggleRotation">
-          <component :is="rotationAction.icon" :size="16" />{{ rotationAction.label }}
+        <button class="button secondary" :disabled="busy || current.status === 'no_credentials'" @click="isManual ? switchMode('auto') : switchMode('manual')">
+          <Pause v-if="!isManual" :size="16" /><Play v-else :size="16" />
+          {{ isManual ? '切换自动' : '切换手动' }}
         </button>
       </section>
 
@@ -492,6 +501,7 @@ onBeforeUnmount(() => {
           <div class="credential-meta"><span>到期时间</span><strong>{{ formatExpiry(credential) }}</strong></div>
           <div class="credential-meta"><span>剩余时间</span><strong>{{ credential.time_remaining_str || '未知' }}</strong></div>
           <div class="row-actions">
+            <button v-if="isManual && current.index !== index" class="icon-button compact" title="使用此凭证" :disabled="busy" @click="selectCredential(index)"><Play :size="16" /></button>
             <button class="icon-button compact" title="测试凭证" :disabled="busy" @click="testCredential(index)"><ShieldCheck :size="16" /></button>
             <button class="icon-button compact danger" title="删除凭证" :disabled="busy" @click="deleteCredential(index)"><Trash2 :size="16" /></button>
           </div>

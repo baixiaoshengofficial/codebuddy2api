@@ -951,11 +951,12 @@ async def chat_completions(
         client_wants_stream = request_body.get("stream", False)
         
         try:
+            cred_idx = credential.get("_credential_index")
             if client_wants_stream:
-                response = await service.handle_stream_response(payload, headers)
+                response = await service.handle_stream_response(payload, headers, cred_idx)
                 return attach_stream_audit(response, audit)
 
-            response = await service.handle_non_stream_response(payload, headers)
+            response = await service.handle_non_stream_response(payload, headers, cred_idx)
             finish_request_audit(
                 audit,
                 status_code=200,
@@ -1019,7 +1020,7 @@ async def responses(
 
         service = CodeBuddyStreamService()
         try:
-            chat_response = await service.handle_non_stream_response(payload, headers)
+            chat_response = await service.handle_non_stream_response(payload, headers, credential.get("_credential_index"))
         except HTTPException as exc:
             finish_request_audit(audit, exc.status_code, error=str(exc.detail))
             raise
@@ -1118,20 +1119,32 @@ async def list_credentials(_token: str = Depends(authenticate)):
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@router.post("/v1/credentials/toggle-rotation", summary="Toggle automatic credential rotation")
-async def toggle_auto_rotation(_token: str = Depends(authenticate)):
-    """切换自动轮换开关"""
+@router.post("/v1/credentials/set-mode", summary="Set credential mode (auto/manual)")
+async def set_credential_mode(request: Request, _token: str = Depends(authenticate)):
+    """设置凭证模式: auto=自动轮换, manual=锁定指定凭证(index 必填)"""
     try:
-        is_enabled = codebuddy_token_manager.toggle_auto_rotation()
-        status = "enabled" if is_enabled else "disabled"
-        message = f"Auto rotation {status}"
+        data = await request.json()
+        mode = data.get("mode")
+        index = data.get("index")
+        if mode not in ("auto", "manual"):
+            raise HTTPException(status_code=422, detail="mode must be 'auto' or 'manual'")
+        if mode == "manual" and index is None:
+            raise HTTPException(status_code=422, detail="index is required for manual mode")
+
+        success = codebuddy_token_manager.set_mode(mode, index)
+        if not success:
+            raise HTTPException(status_code=400, detail="Invalid mode or credential index")
+
         return {
-            "message": message,
-            "auto_rotation_enabled": is_enabled
+            "message": f"Switched to {mode} mode",
+            "mode": mode,
+            "manual_selected_index": codebuddy_token_manager.manual_selected_index
         }
 
+    except HTTPException:
+        raise
     except Exception as e:
-        logger.error(f"切换自动轮换失败: {e}")
+        logger.error(f"设置凭证模式失败: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 
