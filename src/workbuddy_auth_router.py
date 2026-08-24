@@ -1,7 +1,5 @@
 """WorkBuddy authentication for daily check-in credentials."""
 
-import base64
-import json
 import logging
 import secrets
 import time
@@ -18,6 +16,7 @@ from config import (
     get_codebuddy_site,
 )
 from .auth import authenticate
+from .credential_utils import build_credential_filename, decode_jwt_claims, first_claim, select_claims
 from .workbuddy_token_manager import workbuddy_token_manager
 
 logger = logging.getLogger(__name__)
@@ -82,49 +81,28 @@ def _poll_headers() -> Dict[str, str]:
 
 
 def _decode_jwt_user(bearer_token: str) -> Dict[str, Any]:
-    user_id = "unknown"
-    user_info: Dict[str, Any] = {}
-    try:
-        if not bearer_token or "." not in bearer_token:
-            return {"user_id": user_id, "user_info": user_info}
-        parts = bearer_token.split(".")
-        if len(parts) < 2:
-            return {"user_id": user_id, "user_info": user_info}
-        payload_part = parts[1]
-        missing_padding = len(payload_part) % 4
-        if missing_padding:
-            payload_part += "=" * (4 - missing_padding)
-        payload = base64.urlsafe_b64decode(payload_part)
-        jwt_data = json.loads(payload.decode("utf-8"))
-        user_id = (
-            jwt_data.get("preferred_username")
-            or jwt_data.get("email")
-            or jwt_data.get("sub")
-            or "unknown"
-        )
-        user_info = {
-            key: jwt_data.get(key)
-            for key in (
-                "sub",
-                "email",
-                "preferred_username",
-                "name",
-                "given_name",
-                "family_name",
-                "exp",
-                "iat",
-                "scope",
-            )
-            if jwt_data.get(key) is not None
-        }
-        if jwt_data.get("sid"):
-            user_info["session_state"] = jwt_data["sid"]
-    except Exception as exc:
-        logger.warning("Failed to decode WorkBuddy JWT: %s", exc)
-    return {"user_id": user_id, "user_info": user_info}
+    claims = decode_jwt_claims(bearer_token)
+    user_info = select_claims(
+        claims,
+        (
+            "sub", "email", "preferred_username", "name", "given_name", "family_name",
+            "phone", "mobile", "mobile_phone", "phone_number", "telephone", "exp", "iat", "scope",
+        ),
+    )
+    if claims.get("sid") is not None:
+        user_info["session_state"] = claims["sid"]
+    return {
+        "user_id": first_claim(claims, ("preferred_username", "email", "sub")) or "unknown",
+        "user_info": user_info,
+    }
 
 
-async def _fetch_account_uid(client: httpx.AsyncClient, auth_state: str, access_token: str) -> Optional[str]:
+async def _fetch_account_info(
+    client: httpx.AsyncClient,
+    auth_state: str,
+    access_token: str,
+) -> Dict[str, Any]:
+    account_info: Dict[str, Any] = {}
     try:
         response = await client.get(
             f"{_login_account_endpoint()}?state={auth_state}",
@@ -138,24 +116,41 @@ async def _fetch_account_uid(client: httpx.AsyncClient, auth_state: str, access_
             timeout=30,
         )
         if response.status_code != 200:
-            return None
+            return account_info
         payload = response.json()
         data = payload.get("data") if isinstance(payload, dict) else None
         if not isinstance(data, dict):
-            return None
-        for key in ("uid", "userId", "user_id", "id"):
-            value = data.get(key)
-            if value:
-                return str(value)
+            return account_info
+
         account = data.get("account")
+        sources = [data]
         if isinstance(account, dict):
-            for key in ("uid", "userId", "user_id", "id"):
-                value = account.get(key)
-                if value:
-                    return str(value)
+            sources.append(account)
+
+        for source in sources:
+            if not account_info.get("uid"):
+                for key in ("uid", "userId", "user_id", "id"):
+                    value = source.get(key)
+                    if value:
+                        account_info["uid"] = str(value)
+                        break
+            if not account_info.get("phone"):
+                for key in ("phone", "mobile", "mobilePhone", "phoneNumber", "telephone"):
+                    value = source.get(key)
+                    if value:
+                        account_info["phone"] = str(value)
+                        break
+            for field, keys in (("name", ("name", "nickname")), ("email", ("email",))):
+                if account_info.get(field):
+                    continue
+                for key in keys:
+                    value = source.get(key)
+                    if value:
+                        account_info[field] = str(value)
+                        break
     except Exception as exc:
         logger.debug("WorkBuddy account lookup failed: %s", exc)
-    return None
+    return account_info
 
 
 async def start_workbuddy_auth() -> Dict[str, Any]:
@@ -252,7 +247,7 @@ async def poll_workbuddy_auth_status(auth_state: str) -> Dict[str, Any]:
             if result.get("code") == 0 and result.get("data", {}).get("accessToken"):
                 data = result["data"]
                 access_token = data.get("accessToken")
-                account_uid = await _fetch_account_uid(client, auth_state, access_token)
+                account_info = await _fetch_account_info(client, auth_state, access_token)
                 return {
                     "status": "success",
                     "message": "认证成功",
@@ -264,7 +259,10 @@ async def poll_workbuddy_auth_status(auth_state: str) -> Dict[str, Any]:
                         "refresh_token": data.get("refreshToken"),
                         "scope": data.get("scope"),
                         "domain": data.get("domain"),
-                        "account_uid": account_uid,
+                        "account_uid": account_info.get("uid"),
+                        "phone": account_info.get("phone"),
+                        "account_name": account_info.get("name"),
+                        "account_email": account_info.get("email"),
                         "full_response": result,
                     },
                 }
@@ -287,6 +285,12 @@ async def save_workbuddy_token(token_data: Dict[str, Any]) -> bool:
         user_info = dict(decoded.get("user_info") or {})
         if token_data.get("account_uid"):
             user_info["uid"] = token_data["account_uid"]
+        if token_data.get("phone"):
+            user_info["phone"] = token_data["phone"]
+        if token_data.get("account_name"):
+            user_info["name"] = token_data["account_name"]
+        if token_data.get("account_email"):
+            user_info["email"] = token_data["account_email"]
 
         credential_data = {
             "bearer_token": bearer_token,
@@ -297,14 +301,14 @@ async def save_workbuddy_token(token_data: Dict[str, Any]) -> bool:
             "token_type": token_data.get("token_type", "Bearer"),
             "scope": token_data.get("scope"),
             "domain": token_data.get("domain"),
+            "phone": token_data.get("phone"),
             "product": "WorkBuddy",
             "user_info": user_info or None,
         }
         credential_data = {key: value for key, value in credential_data.items() if value is not None}
 
         timestamp = int(time.time())
-        safe_user_id = "".join(c for c in str(user_id) if c.isalnum() or c in "._-")[:20]
-        filename = f"workbuddy_{safe_user_id}_{timestamp}.json"
+        filename = build_credential_filename("workbuddy", user_id, timestamp)
         return workbuddy_token_manager.add_credential_with_data(credential_data, filename=filename)
     except Exception as exc:
         logger.error("Failed to save WorkBuddy token: %s", exc)

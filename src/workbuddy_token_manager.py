@@ -7,6 +7,8 @@ import os
 import time
 from typing import Any, Dict, List, Optional
 
+from .credential_utils import build_credential_filename, resolve_project_path
+
 logger = logging.getLogger(__name__)
 
 
@@ -17,12 +19,7 @@ class WorkBuddyTokenManager:
         if creds_dir is None:
             from config import get_workbuddy_creds_dir
             creds_dir = get_workbuddy_creds_dir()
-        # Prefer project-root relative path so Docker mount /app/.workbuddy_creds works.
-        if os.path.isabs(creds_dir):
-            self.creds_dir = creds_dir
-        else:
-            project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
-            self.creds_dir = os.path.join(project_root, creds_dir)
+        self.creds_dir = resolve_project_path(creds_dir)
         self.credentials: List[Dict[str, Any]] = []
         self.load_all_tokens()
 
@@ -63,6 +60,21 @@ class WorkBuddyTokenManager:
             logger.error("Error checking WorkBuddy token expiry: %s", exc)
             return False
 
+    @staticmethod
+    def _get_phone(data: Dict[str, Any], user_info: Dict[str, Any]) -> Optional[str]:
+        """Return the phone-style account identifier saved by WorkBuddy."""
+        for source in (data, user_info):
+            for key in ("phone", "mobile", "mobile_phone", "phone_number", "telephone"):
+                value = source.get(key)
+                if value:
+                    return str(value)
+
+        # WorkBuddy JWTs commonly use preferred_username for the login phone.
+        preferred_username = user_info.get("preferred_username")
+        if preferred_username:
+            return str(preferred_username)
+        return None
+
     def get_credential_records(self) -> List[Dict[str, Any]]:
         return [
             {
@@ -77,6 +89,7 @@ class WorkBuddyTokenManager:
         for index, cred in enumerate(self.credentials):
             data = cred["data"]
             user_info = data.get("user_info") if isinstance(data.get("user_info"), dict) else {}
+            phone = self._get_phone(data, user_info)
             expires_at = None
             time_remaining = None
             if data.get("created_at") and data.get("expires_in"):
@@ -86,7 +99,8 @@ class WorkBuddyTokenManager:
                 "index": index,
                 "filename": os.path.basename(cred["file_path"]),
                 "user_id": data.get("user_id") or user_info.get("uid") or "unknown",
-                "email": user_info.get("email") or data.get("user_id"),
+                "phone": phone,
+                "email": user_info.get("email") or phone or data.get("user_id"),
                 "name": user_info.get("name") or user_info.get("nickname"),
                 "domain": data.get("domain"),
                 "product": data.get("product", "WorkBuddy"),
@@ -107,8 +121,7 @@ class WorkBuddyTokenManager:
         if not filename:
             user_id = credential_data.get("user_id", "unknown")
             timestamp = credential_data.get("created_at", int(time.time()))
-            safe_user_id = "".join(c for c in str(user_id) if c.isalnum() or c in "._-")[:20]
-            filename = f"workbuddy_{safe_user_id}_{timestamp}.json"
+            filename = build_credential_filename("workbuddy", user_id, timestamp)
         if not filename.endswith(".json"):
             filename += ".json"
 

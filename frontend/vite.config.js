@@ -7,6 +7,7 @@ export default defineConfig({
     proxy: {
       '/api': 'http://127.0.0.1:8001',
       '/codebuddy': 'http://127.0.0.1:8001',
+      '/workbuddy': 'http://127.0.0.1:8001',
       '/health': 'http://127.0.0.1:8001',
     },
   },

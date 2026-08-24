@@ -41,6 +41,7 @@ start.bat
 python3 -m venv venv
 source venv/bin/activate
 pip install -r requirements.txt
+cd frontend && npm ci && npm run build && cd ..
 python web.py
 ```
 
@@ -183,7 +184,9 @@ curl -sS -X POST 'http://192.168.100.3:8001/codebuddy/v1/chat/completions' \
 - `GET /codebuddy/v1/responses`: 轻量探测接口，供 cc-switch 等工具测速。
 - `POST /codebuddy/v1/responses`: 最小 Responses 兼容接口，用于 Codex/cc-switch 连通性探测和简单请求。
 - `GET /codebuddy/v1/credentials`: （需要认证）在 Web UI 中用于列出所有凭证。
-- `POST /codebuddy/v1/credentials`: （需要认证）在 Web UI 中用于添加新凭证。
+- `POST /codebuddy/v1/credentials/set-mode`: （需要认证）切换自动轮换或锁定指定凭证。
+- `GET /codebuddy/v1/credentials/current`: （需要认证）查看当前使用的凭证。
+- `POST /codebuddy/v1/credentials/delete`: （需要认证）删除指定凭证。
 - `GET /api/checkin`: （需要认证）查看自动签到计划及逐账号状态。
 - `POST /api/checkin/run`: （需要认证）立即检查并领取所有账号的待领签到奖励。
 - `GET /workbuddy/auth/start`: （需要认证）启动 WorkBuddy 签到授权。
@@ -221,6 +224,20 @@ codebuddy2api/
 ├── Dockerfile                     # Docker 镜像构建文件
 ├── entrypoint.sh                  # Docker 容器入口脚本
 └── README.md                      # 本文档
+```
+
+## 🧭 架构与维护
+
+CodeBuddy 与 WorkBuddy 是两个独立的账号域：前者仅用于 OpenAI 兼容 API 的凭证轮换，后者仅用于每日签到。管理端也按这两个账号域分别展示、授权和操作。
+
+核心模块的职责边界、运行期副作用约束和本地验证流程见 [docs/architecture.md](docs/architecture.md)。日常改动请遵循“路由负责 HTTP 编排、管理器负责领域规则、共享工具不依赖具体产品”的原则，避免在路由中混入文件读写或复杂业务逻辑。
+
+### 开发验证
+
+```bash
+venv/bin/python -m unittest discover -s tests -v
+venv/bin/python -m compileall -q src web.py config.py
+cd frontend && npm run build
 ```
 
 ## ⚙️ 配置选项

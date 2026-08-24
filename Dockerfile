@@ -36,6 +36,10 @@ ENTRYPOINT ["entrypoint.sh"]
 # 将项目和前端构建产物复制到工作目录中
 COPY . .
 COPY --from=frontend-builder /frontend/dist ./frontend/dist
+# The service runs as appuser.  COPY may preserve restrictive permissions from
+# a locally built frontend/dist directory, so ensure the static admin files are
+# traversable and readable by the runtime user.
+RUN chmod -R a+rX /app/frontend/dist
 
 # 声明容器将要监听的端口
 # 这个端口应该与您在配置中设置的 CODEBUDDY_PORT 一致

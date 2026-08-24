@@ -8,6 +8,7 @@ import time
 import logging
 from typing import Dict, Optional, List, Any
 from .usage_stats_manager import usage_stats_manager
+from .credential_utils import build_credential_filename, resolve_project_path
 
 logger = logging.getLogger(__name__)
 
@@ -17,10 +18,10 @@ class CodeBuddyTokenManager:
     
     def __init__(self, creds_dir=None):
         if creds_dir is None:
-            from config import get_codebuddy_creds_dir, get_rotation_count
+            from config import get_codebuddy_creds_dir
             creds_dir = get_codebuddy_creds_dir()
         
-        self.creds_dir = os.path.join(os.path.dirname(__file__), '..', creds_dir)
+        self.creds_dir = resolve_project_path(creds_dir)
         self.state_file = os.path.join(self.creds_dir, 'manager_state.json')
         self.credentials = []
         self.current_index = 0  # Start from the first credential
@@ -260,6 +261,28 @@ class CodeBuddyTokenManager:
         selected['_credential_filename'] = credential_filename
         selected['_credential_index'] = self.current_index
         return selected
+
+    def get_credential_by_index(self, index: int) -> Optional[Dict[str, Any]]:
+        """Return one usable credential without changing the active mode or index."""
+        if isinstance(index, bool) or not isinstance(index, int):
+            return None
+        if not 0 <= index < len(self.credentials):
+            return None
+
+        credential = self.credentials[index]
+        if self.is_token_expired(credential['data']):
+            logger.warning(
+                "Requested credential is expired: %s",
+                os.path.basename(credential['file_path']),
+            )
+            return None
+
+        credential_filename = os.path.basename(credential['file_path'])
+        usage_stats_manager.record_credential_usage(credential_filename)
+        selected = dict(credential['data'])
+        selected['_credential_filename'] = credential_filename
+        selected['_credential_index'] = index
+        return selected
     
     def get_all_credentials(self) -> List[Dict]:
         """获取所有凭证"""
@@ -338,8 +361,7 @@ class CodeBuddyTokenManager:
         if not filename:
             user_id = credential_data.get('user_id', 'unknown')
             timestamp = credential_data.get('created_at', int(time.time()))
-            safe_user_id = "".join(c for c in str(user_id) if c.isalnum() or c in "._-")[:20]
-            filename = f"codebuddy_{safe_user_id}_{timestamp}.json"
+            filename = build_credential_filename("codebuddy", user_id, timestamp)
         
         if not filename.endswith('.json'):
             filename += '.json'

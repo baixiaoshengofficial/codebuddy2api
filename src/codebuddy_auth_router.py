@@ -2,25 +2,23 @@
 CodeBuddy Authentication Router
 基于真实CodeBuddy API的认证实现
 """
-import hashlib
 import secrets
 import httpx
-import base64
-import json
 import uuid
 import time
 from typing import Dict, Any, Optional
 from fastapi.responses import JSONResponse
-from fastapi import APIRouter, HTTPException, Depends, Body
-from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
+from fastapi import APIRouter, Depends, Body
 
 from config import (
     get_codebuddy_api_endpoint,
     get_codebuddy_api_host,
     get_codebuddy_site,
-    get_server_password,
 )
 import logging
+
+from .auth import authenticate
+from .credential_utils import build_credential_filename, decode_jwt_claims, first_claim, select_claims
 
 logger = logging.getLogger(__name__)
 
@@ -36,40 +34,7 @@ def get_codebuddy_auth_state_endpoint() -> str:
 
 _last_auth_state: Optional[str] = None
 
-# --- Router Setup ---
 router = APIRouter()
-security = HTTPBearer()
-
-# --- JWT Authentication ---
-import jwt
-
-def get_jwt_secret():
-    """基于服务密码生成JWT密钥"""
-    password = get_server_password()
-    if not password:
-        return "fallback-secret-for-development-only"
-    return hashlib.sha256(password.encode()).hexdigest()
-
-JWT_SECRET = get_jwt_secret()
-ALGORITHM = "HS256"
-
-def authenticate(credentials = Depends(security)) -> str:
-    """基于服务密码的认证"""
-    password = get_server_password()
-    if not password:
-        raise HTTPException(status_code=500, detail="CODEBUDDY_PASSWORD is not configured on the server.")
-    
-    token = credentials.credentials
-    if token != password:
-        raise HTTPException(status_code=403, detail="Invalid password")
-    return token
-
-# --- Helper Functions ---
-def generate_auth_state() -> str:
-    """生成CodeBuddy认证的state参数"""
-    timestamp = int(time.time())
-    random_part = secrets.token_hex(16)
-    return f"{random_part}_{timestamp}"
 
 def get_auth_start_headers() -> Dict[str, str]:
     """生成启动认证(/state)所需的请求头"""
@@ -266,67 +231,17 @@ async def save_codebuddy_token(token_data: Dict[str, Any]) -> bool:
         # 添加创建时间
         token_data["created_at"] = int(time.time())
         
-        # 从JWT中解析用户信息
+        # Parse display metadata only; token verification remains upstream's job.
         bearer_token = token_data.get("access_token") or token_data.get("bearer_token")
-        user_id = "unknown"
-        user_info = {}
-        
-        try:
-            if bearer_token and '.' in bearer_token:
-                # 分割JWT token
-                parts = bearer_token.split('.')
-                if len(parts) >= 2:
-                    payload_part = parts[1]
-                    
-                    # 修复Base64 padding问题
-                    missing_padding = len(payload_part) % 4
-                    if missing_padding:
-                        payload_part += '=' * (4 - missing_padding)
-                    
-                    # 解码JWT payload
-                    try:
-                        payload = base64.urlsafe_b64decode(payload_part)
-                        jwt_data = json.loads(payload.decode('utf-8'))
-                        
-                        # 提取用户信息，优先使用邮箱作为用户标识
-                        user_id = (jwt_data.get('email') or 
-                                 jwt_data.get('preferred_username') or 
-                                 jwt_data.get('sub') or 
-                                 "unknown")
-                        
-                        # 保存完整的用户信息
-                        user_info = {
-                            'sub': jwt_data.get('sub'),
-                            'email': jwt_data.get('email'),
-                            'preferred_username': jwt_data.get('preferred_username'),
-                            'name': jwt_data.get('name'),
-                            'given_name': jwt_data.get('given_name'),
-                            'family_name': jwt_data.get('family_name'),
-                            'exp': jwt_data.get('exp'),
-                            'iat': jwt_data.get('iat'),
-                            'scope': jwt_data.get('scope'),
-                            'session_state': jwt_data.get('sid')
-                        }
-                        
-                        # 移除None值
-                        user_info = {k: v for k, v in user_info.items() if v is not None}
-                        
-                        logger.info(f"成功解析JWT，用户: {user_id}")
-                        logger.debug(f"JWT用户信息: {user_info}")
-                        
-                    except (json.JSONDecodeError, UnicodeDecodeError) as decode_error:
-                        logger.warning(f"JWT payload解码失败: {decode_error}")
-                        user_id = token_data.get('domain', 'unknown')
-                else:
-                    logger.warning("JWT格式无效：缺少必要的部分")
-                    user_id = token_data.get('domain', 'unknown')
-            else:
-                logger.warning("Bearer token为空或格式无效")
-                user_id = token_data.get('domain', 'unknown')
-                
-        except Exception as e:
-            logger.error(f"JWT解析过程发生异常: {e}")
-            user_id = token_data.get('domain', 'unknown')
+        claims = decode_jwt_claims(bearer_token or "")
+        user_id = first_claim(claims, ("email", "preferred_username", "sub"))
+        user_id = user_id or token_data.get("domain") or "unknown"
+        user_info = select_claims(
+            claims,
+            ("sub", "email", "preferred_username", "name", "given_name", "family_name", "exp", "iat", "scope"),
+        )
+        if claims.get("sid") is not None:
+            user_info["session_state"] = claims["sid"]
         
         # 构建完整的凭证数据
         credential_data = {
@@ -348,8 +263,7 @@ async def save_codebuddy_token(token_data: Dict[str, Any]) -> bool:
         
         # 生成更友好的文件名
         timestamp = int(time.time())
-        safe_user_id = "".join(c for c in user_id if c.isalnum() or c in "._-")[:20]
-        filename = f"codebuddy_{safe_user_id}_{timestamp}.json"
+        filename = build_credential_filename("codebuddy", user_id, timestamp)
         
         # 使用token管理器保存
         success = codebuddy_token_manager.add_credential_with_data(
@@ -368,7 +282,7 @@ async def save_codebuddy_token(token_data: Dict[str, Any]) -> bool:
 
 # --- API Endpoints ---
 @router.get("/auth/start", summary="Start CodeBuddy Authentication")
-async def start_device_auth():
+async def start_device_auth(_token: str = Depends(authenticate)):
     """启动CodeBuddy认证流程"""
     try:
         logger.info("开始启动CodeBuddy认证流程...")
@@ -395,7 +309,8 @@ async def start_device_auth():
 async def poll_for_token(
     device_code: str = Body(None, embed=True),
     code_verifier: str = Body(None, embed=True),
-    auth_state: str = Body(None, embed=True)
+    auth_state: str = Body(None, embed=True),
+    _token: str = Depends(authenticate),
 ):
     """轮询CodeBuddy token端点"""
     from .codebuddy_token_manager import codebuddy_token_manager

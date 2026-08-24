@@ -206,80 +206,97 @@ def get_client_detail(headers: Any) -> Optional[str]:
 
 
 class RequestLogManager:
-    def __init__(self, db_path: Optional[str] = None):
+    """SQLite-backed request audit store with explicit initialization boundaries."""
+
+    def __init__(self, db_path: Optional[str] = None, initialize: bool = True):
         self.db_path = db_path or DEFAULT_DB_PATH
         self._lock = threading.RLock()
-        self._initialize()
+        self._initialized = False
+        if initialize:
+            self._ensure_initialized()
 
-    def _connect(self) -> sqlite3.Connection:
+    def _open_connection(self) -> sqlite3.Connection:
         connection = sqlite3.connect(self.db_path, timeout=10)
         connection.row_factory = sqlite3.Row
         connection.execute("PRAGMA busy_timeout = 10000")
         return connection
 
-    def _initialize(self) -> None:
-        os.makedirs(os.path.dirname(self.db_path), exist_ok=True)
-        with self._lock, self._connect() as connection:
-            connection.execute("PRAGMA journal_mode = WAL")
-            connection.execute(
-                """
-                CREATE TABLE IF NOT EXISTS request_logs (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    request_id TEXT NOT NULL,
-                    conversation_id TEXT,
-                    created_at INTEGER NOT NULL,
-                    completed_at INTEGER,
-                    endpoint TEXT NOT NULL,
-                    model TEXT NOT NULL,
-                    client TEXT NOT NULL,
-                    client_detail TEXT,
-                    client_host TEXT,
-                    credential TEXT,
-                    credential_user_id TEXT,
-                    request_preview TEXT NOT NULL,
-                    response_preview TEXT,
-                    request_hash TEXT NOT NULL,
-                    is_streaming INTEGER NOT NULL DEFAULT 0,
-                    status_code INTEGER,
-                    status TEXT NOT NULL DEFAULT 'pending',
-                    latency_ms INTEGER,
-                    upstream_attempts INTEGER NOT NULL DEFAULT 1,
-                    input_tokens INTEGER,
-                    output_tokens INTEGER,
-                    total_tokens INTEGER,
-                    token_estimated INTEGER NOT NULL DEFAULT 0,
-                    error TEXT
-                )
-                """
-            )
-            connection.execute(
-                "CREATE INDEX IF NOT EXISTS idx_request_logs_created_at ON request_logs(created_at DESC)"
-            )
-            connection.execute(
-                "CREATE INDEX IF NOT EXISTS idx_request_logs_model ON request_logs(model)"
-            )
-            connection.execute(
-                "CREATE INDEX IF NOT EXISTS idx_request_logs_credential ON request_logs(credential)"
-            )
-            columns = {
-                row[1] for row in connection.execute("PRAGMA table_info(request_logs)").fetchall()
-            }
-            if "token_estimated" not in columns:
+    def _ensure_initialized(self) -> None:
+        """Create or migrate storage on first use, not while modules are imported."""
+        if self._initialized:
+            return
+        with self._lock:
+            if self._initialized:
+                return
+            directory = os.path.dirname(self.db_path)
+            if directory:
+                os.makedirs(directory, exist_ok=True)
+            with self._open_connection() as connection:
+                connection.execute("PRAGMA journal_mode = WAL")
                 connection.execute(
-                    "ALTER TABLE request_logs ADD COLUMN token_estimated INTEGER NOT NULL DEFAULT 0"
+                    """
+                    CREATE TABLE IF NOT EXISTS request_logs (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        request_id TEXT NOT NULL,
+                        conversation_id TEXT,
+                        created_at INTEGER NOT NULL,
+                        completed_at INTEGER,
+                        endpoint TEXT NOT NULL,
+                        model TEXT NOT NULL,
+                        client TEXT NOT NULL,
+                        client_detail TEXT,
+                        client_host TEXT,
+                        credential TEXT,
+                        credential_user_id TEXT,
+                        request_preview TEXT NOT NULL,
+                        response_preview TEXT,
+                        request_hash TEXT NOT NULL,
+                        is_streaming INTEGER NOT NULL DEFAULT 0,
+                        status_code INTEGER,
+                        status TEXT NOT NULL DEFAULT 'pending',
+                        latency_ms INTEGER,
+                        upstream_attempts INTEGER NOT NULL DEFAULT 1,
+                        input_tokens INTEGER,
+                        output_tokens INTEGER,
+                        total_tokens INTEGER,
+                        token_estimated INTEGER NOT NULL DEFAULT 0,
+                        error TEXT
+                    )
+                    """
                 )
-            if "upstream_attempts" not in columns:
                 connection.execute(
-                    "ALTER TABLE request_logs ADD COLUMN upstream_attempts INTEGER NOT NULL DEFAULT 1"
+                    "CREATE INDEX IF NOT EXISTS idx_request_logs_created_at ON request_logs(created_at DESC)"
                 )
-            if "client_detail" not in columns:
                 connection.execute(
-                    "ALTER TABLE request_logs ADD COLUMN client_detail TEXT"
+                    "CREATE INDEX IF NOT EXISTS idx_request_logs_model ON request_logs(model)"
                 )
-            if "response_preview" not in columns:
                 connection.execute(
-                    "ALTER TABLE request_logs ADD COLUMN response_preview TEXT"
+                    "CREATE INDEX IF NOT EXISTS idx_request_logs_credential ON request_logs(credential)"
                 )
+                columns = {
+                    row[1] for row in connection.execute("PRAGMA table_info(request_logs)").fetchall()
+                }
+                if "token_estimated" not in columns:
+                    connection.execute(
+                        "ALTER TABLE request_logs ADD COLUMN token_estimated INTEGER NOT NULL DEFAULT 0"
+                    )
+                if "upstream_attempts" not in columns:
+                    connection.execute(
+                        "ALTER TABLE request_logs ADD COLUMN upstream_attempts INTEGER NOT NULL DEFAULT 1"
+                    )
+                if "client_detail" not in columns:
+                    connection.execute(
+                        "ALTER TABLE request_logs ADD COLUMN client_detail TEXT"
+                    )
+                if "response_preview" not in columns:
+                    connection.execute(
+                        "ALTER TABLE request_logs ADD COLUMN response_preview TEXT"
+                    )
+                self._initialized = True
+
+    def _connect(self) -> sqlite3.Connection:
+        self._ensure_initialized()
+        return self._open_connection()
 
     def start_request(
         self,
@@ -515,4 +532,6 @@ class RequestLogManager:
         return filename, output.getvalue()
 
 
-request_log_manager = RequestLogManager()
+# Importing a router must not write a database. The service initializes storage
+# only when the first request is logged.
+request_log_manager = RequestLogManager(initialize=False)

@@ -54,7 +54,7 @@ const workbuddyRows = computed(() => {
     return {
       index,
       filename: credential.filename,
-      label: credential.email || credential.user_id || `WorkBuddy #${index + 1}`,
+      label: credential.phone || credential.email || credential.user_id || `WorkBuddy #${index + 1}`,
       domain: credential.domain || '-',
       expiry: formatExpiry(credential),
       isExpired: !!credential.is_expired,
@@ -167,11 +167,14 @@ async function deleteCredential(index) {
   }
 }
 
-async function switchMode(mode, index = null) {
+async function switchMode(mode, index = current.value.index) {
   busy.value = true
   try {
     const body = { mode }
-    if (mode === 'manual' && index !== null) body.index = index
+    if (mode === 'manual') {
+      if (!Number.isInteger(index) || index < 0) throw new Error('没有可锁定的凭证')
+      body.index = index
+    }
     await apiFetch('/codebuddy/v1/credentials/set-mode', { method: 'POST', body: JSON.stringify(body) })
     notify(mode === 'manual' ? `已切换到手动模式` : '已切换到自动模式', 'success')
     await load()
@@ -202,7 +205,12 @@ async function testCredential(index) {
     if (!models.value.length) throw new Error('没有可用模型')
     await apiFetch('/codebuddy/v1/chat/completions', {
       method: 'POST',
-      body: JSON.stringify({ model: models.value[0], messages: [{ role: 'user', content: 'test' }], max_tokens: 1 }),
+      body: JSON.stringify({
+        model: models.value[0],
+        messages: [{ role: 'user', content: 'test' }],
+        max_tokens: 1,
+        _credential_index: index,
+      }),
     })
     notify(`凭证 #${index + 1} 测试成功`, 'success')
     await load()
@@ -217,7 +225,7 @@ async function startAuth() {
   authPending.value = true
   stopPolling()
   try {
-    const result = await apiFetch('/codebuddy/auth/start', {}, false)
+    const result = await apiFetch('/codebuddy/auth/start')
     authUrl.value = result.verification_uri_complete || ''
     authState.value = result.auth_state || ''
     if (!authUrl.value || !authState.value) throw new Error(result.message || '未返回认证链接')
@@ -237,7 +245,7 @@ function pollToken() {
       const result = await apiFetch('/codebuddy/auth/poll', {
         method: 'POST',
         body: JSON.stringify({ auth_state: authState.value }),
-      }, false)
+      })
       if (result.access_token) {
         stopPolling()
         authPending.value = false
@@ -281,8 +289,7 @@ async function startWorkbuddyAuth() {
     if (!workbuddyAuthUrl.value || !workbuddyAuthState.value) {
       throw new Error(result.message || '未返回认证链接')
     }
-    notify('已打开授权页，登录完成后会自动保存凭证', 'success')
-    window.open(workbuddyAuthUrl.value, '_blank', 'noopener,noreferrer')
+    notify('已生成授权链接，请在下方打开并完成登录', 'success')
     pollWorkbuddyToken()
   } catch (error) {
     workbuddyAuthPending.value = false
@@ -390,45 +397,78 @@ onBeforeUnmount(() => {
         <p class="eyebrow">Credential pool</p>
         <h2>凭证管理</h2>
       </div>
-      <div class="toolbar-actions">
-        <button class="button secondary" :disabled="authPending" @click="startAuth">
-          <LoaderCircle v-if="authPending" class="spin" :size="16" /><ExternalLink v-else :size="16" />
-          {{ authPending ? '等待授权' : '授权 CodeBuddy' }}
-        </button>
-      </div>
     </div>
 
-    <template>
-      <section class="status-strip" :class="current.status === 'no_credentials' ? 'warning' : 'success'">
+    <section class="checkin-section codebuddy-section">
+      <header>
+        <div class="checkin-title">
+          <span class="metric-icon"><KeyRound :size="18" /></span>
+          <span>
+            <strong>CodeBuddy 账号列表</strong>
+            <small>{{ credentials.length }} 个凭证 · 用于 API 请求与凭证轮换</small>
+          </span>
+        </div>
+        <div class="checkin-actions">
+          <button class="button secondary" :disabled="authPending" @click="startAuth">
+            <LoaderCircle v-if="authPending" class="spin" :size="16" /><ExternalLink v-else :size="16" />
+            {{ authPending ? '等待授权' : '授权 CodeBuddy' }}
+          </button>
+          <button class="icon-button" title="刷新凭证" @click="load"><RefreshCw :size="18" :class="{ spin: loading }" /></button>
+        </div>
+      </header>
+
+    <section class="status-strip" :class="current.status === 'no_credentials' ? 'warning' : 'success'">
         <div>
           <ShieldCheck :size="20" />
           <span><strong>{{ currentLabel }}</strong><small v-if="current.filename">{{ current.filename }} · {{ current.user_id || '未知用户' }}</small></span>
         </div>
-        <button class="button secondary" :disabled="busy || current.status === 'no_credentials'" @click="isManual ? switchMode('auto') : switchMode('manual')">
+        <button class="button secondary" :disabled="busy || current.status === 'no_credentials'" @click="isManual ? switchMode('auto') : switchMode('manual', current.index)">
           <Pause v-if="!isManual" :size="16" /><Play v-else :size="16" />
           {{ isManual ? '切换自动' : '切换手动' }}
         </button>
-      </section>
+    </section>
 
-      <div v-if="authUrl" class="auth-link-box" style="margin: 12px 0;">
-        <input :value="authUrl" readonly />
-        <button class="icon-button compact" title="复制链接" @click="copyAuthUrl"><Clipboard :size="16" /></button>
-        <a class="icon-button compact" title="打开授权页面" :href="authUrl" target="_blank" rel="noopener"><ExternalLink :size="16" /></a>
-      </div>
-      <p v-if="authPending" class="muted" style="margin: 0 0 12px; font-size: 13px;">
-        正在轮询授权结果…请在浏览器完成登录；成功后会自动保存并刷新账号列表。
-        <button type="button" class="linkish" style="margin-left: 8px;" @click="cancelAuth">取消等待</button>
-      </p>
+    <div v-if="authUrl" class="auth-link-box" style="margin: 12px 14px 0;">
+      <input :value="authUrl" readonly />
+      <button class="icon-button compact" title="复制链接" @click="copyAuthUrl"><Clipboard :size="16" /></button>
+      <a class="icon-button compact" title="打开授权页面" :href="authUrl" target="_blank" rel="noopener"><ExternalLink :size="16" /></a>
+    </div>
+    <p v-if="authPending" class="muted" style="margin: 8px 14px 0; font-size: 13px;">
+      正在轮询授权结果…请在浏览器完成登录；成功后会自动保存并刷新账号列表。
+      <button type="button" class="linkish" style="margin-left: 8px;" @click="cancelAuth">取消等待</button>
+    </p>
 
-      <section class="checkin-section">
+    <div class="credential-list">
+      <div v-if="loading && !credentials.length" class="empty-state"><LoaderCircle class="spin" :size="22" />加载中</div>
+      <div v-else-if="!credentials.length" class="empty-state"><KeyRound :size="24" />暂无凭证</div>
+      <article v-for="(credential, index) in credentials" :key="credential.filename || index" class="credential-row" :class="{ selected: current.index === index }">
+        <div class="credential-state" :class="credential.is_expired ? 'expired' : 'valid'">
+          <Check v-if="!credential.is_expired" :size="18" />
+          <KeyRound v-else :size="18" />
+        </div>
+        <div class="credential-primary">
+          <div><strong>{{ credential.email || credential.user_id || `凭证 #${index + 1}` }}</strong><span v-if="current.index === index" class="status-badge success">当前使用</span></div>
+          <small>{{ credential.filename }}</small>
+        </div>
+        <div class="credential-meta"><span>到期时间</span><strong>{{ formatExpiry(credential) }}</strong></div>
+        <div class="credential-meta"><span>剩余时间</span><strong>{{ credential.time_remaining_str || '未知' }}</strong></div>
+        <div class="row-actions">
+          <button v-if="isManual && current.index !== index" class="icon-button compact" title="使用此凭证" :disabled="busy" @click="selectCredential(index)"><Play :size="16" /></button>
+          <button class="icon-button compact" title="测试凭证" :disabled="busy" @click="testCredential(index)"><ShieldCheck :size="16" /></button>
+          <button class="icon-button compact danger" title="删除凭证" :disabled="busy" @click="deleteCredential(index)"><Trash2 :size="16" /></button>
+        </div>
+      </article>
+    </div>
+    </section>
+
+    <section class="checkin-section">
         <header>
           <div class="checkin-title">
             <span class="metric-icon amber"><Gift :size="18" /></span>
             <span>
-              <strong>每日签到</strong>
+              <strong>WorkBuddy 账号列表</strong>
               <small>
-                {{ checkin.enabled ? `自动签到已开启 · 每天 ${checkin.schedule_time || '11:00'}（北京时间）` : '自动签到已关闭' }}
-                · 需单独授权 WorkBuddy
+                用于每日签到 · {{ checkin.enabled ? `自动签到已开启 · 每天 ${checkin.schedule_time || '11:00'}（北京时间）` : '自动签到已关闭' }}
               </small>
             </span>
           </div>
@@ -479,35 +519,6 @@ onBeforeUnmount(() => {
             </div>
           </article>
         </div>
-      </section>
-
-      <div class="section-heading">
-        <div><h3>CodeBuddy 账号列表</h3><span>{{ credentials.length }} 个凭证</span></div>
-        <button class="icon-button" title="刷新凭证" @click="load"><RefreshCw :size="18" :class="{ spin: loading }" /></button>
-      </div>
-
-      <div class="credential-list">
-        <div v-if="loading && !credentials.length" class="empty-state"><LoaderCircle class="spin" :size="22" />加载中</div>
-        <div v-else-if="!credentials.length" class="empty-state"><KeyRound :size="24" />暂无凭证</div>
-        <article v-for="(credential, index) in credentials" :key="credential.filename || index" class="credential-row" :class="{ selected: current.index === index }">
-          <div class="credential-state" :class="credential.is_expired ? 'expired' : 'valid'">
-            <Check v-if="!credential.is_expired" :size="18" />
-            <KeyRound v-else :size="18" />
-          </div>
-          <div class="credential-primary">
-            <div><strong>{{ credential.email || credential.user_id || `凭证 #${index + 1}` }}</strong><span v-if="current.index === index" class="status-badge success">当前使用</span></div>
-            <small>{{ credential.filename }}</small>
-          </div>
-          <div class="credential-meta"><span>到期时间</span><strong>{{ formatExpiry(credential) }}</strong></div>
-          <div class="credential-meta"><span>剩余时间</span><strong>{{ credential.time_remaining_str || '未知' }}</strong></div>
-          <div class="row-actions">
-            <button v-if="isManual && current.index !== index" class="icon-button compact" title="使用此凭证" :disabled="busy" @click="selectCredential(index)"><Play :size="16" /></button>
-            <button class="icon-button compact" title="测试凭证" :disabled="busy" @click="testCredential(index)"><ShieldCheck :size="16" /></button>
-            <button class="icon-button compact danger" title="删除凭证" :disabled="busy" @click="deleteCredential(index)"><Trash2 :size="16" /></button>
-          </div>
-        </article>
-      </div>
-    </template>
-
+    </section>
   </section>
 </template>

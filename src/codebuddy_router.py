@@ -454,7 +454,12 @@ class CodeBuddyStreamService:
         else:
             raise HTTPException(status_code=status_code, detail=f"CodeBuddy API error: {error_msg}")
     
-    async def handle_stream_response(self, payload: Dict[str, Any], headers: Dict[str, str]) -> StreamingResponse:
+    async def handle_stream_response(
+        self,
+        payload: Dict[str, Any],
+        headers: Dict[str, str],
+        credential_index: Optional[int] = None,
+    ) -> StreamingResponse:
         """处理流式响应 - 使用OpenAI兼容性转换器修复格式问题"""
         async def stream_core():
             client = await get_http_client()
@@ -521,7 +526,12 @@ class CodeBuddyStreamService:
         
         return StreamingResponse(stream_with_retry(), media_type="text/event-stream", headers=SSE_HEADERS)
     
-    async def handle_non_stream_response(self, payload: Dict[str, Any], headers: Dict[str, str]) -> Dict[str, Any]:
+    async def handle_non_stream_response(
+        self,
+        payload: Dict[str, Any],
+        headers: Dict[str, str],
+        credential_index: Optional[int] = None,
+    ) -> Dict[str, Any]:
         """处理非流式响应 - 使用修复后的聚合器，支持多工具调用"""
         try:
             client = await get_http_client()
@@ -609,10 +619,13 @@ class CredentialManager:
     """凭证管理器 - 线程安全的凭证获取"""
     
     @staticmethod
-    def get_valid_credential() -> Dict[str, Any]:
+    def get_valid_credential(credential_index: Optional[int] = None) -> Dict[str, Any]:
         """获取有效凭证，包含错误处理"""
         try:
-            credential = codebuddy_token_manager.get_next_credential()
+            if credential_index is None:
+                credential = codebuddy_token_manager.get_next_credential()
+            else:
+                credential = codebuddy_token_manager.get_credential_by_index(credential_index)
             if not credential:
                 raise HTTPException(status_code=401, detail="没有可用的CodeBuddy凭证")
             
@@ -921,9 +934,18 @@ async def chat_completions(
         
         # 验证请求参数
         RequestProcessor.validate_request(request_body)
+
+        # The management UI can test one credential without changing the
+        # currently selected credential or the rotation mode.  This field is
+        # intentionally removed before forwarding the request upstream.
+        credential_index = request_body.pop("_credential_index", None)
+        if credential_index is not None and (
+            isinstance(credential_index, bool) or not isinstance(credential_index, int)
+        ):
+            raise HTTPException(status_code=422, detail="_credential_index must be an integer")
         
         # 获取有效凭证
-        credential = CredentialManager.get_valid_credential()
+        credential = CredentialManager.get_valid_credential(credential_index)
         
         # 预处理请求并创建持久化请求明细
         payload = RequestProcessor.prepare_payload(request_body)
