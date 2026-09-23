@@ -33,6 +33,8 @@ class CheckinManagerTests(unittest.IsolatedAsyncioTestCase):
                 "headers": {k: v for k, v in request.headers.items()},
             })
             body = responses.pop(0)
+            if isinstance(body, Exception):
+                raise body
             if isinstance(body, tuple):
                 status_code, payload = body
             else:
@@ -149,6 +151,49 @@ class CheckinManagerTests(unittest.IsolatedAsyncioTestCase):
         with open(manager.state_file, "r", encoding="utf-8") as handle:
             saved = json.load(handle)
         self.assertEqual(saved["accounts"]["account.json"]["status"], "already_checked_in")
+
+    async def test_timeout_retries_and_claims_account(self):
+        manager, calls = self.make_manager([
+            httpx.ReadTimeout(""),
+            {"code": 0, "data": {"active": True, "today_checked_in": False}},
+            {"code": 0, "data": {"credit": 100}},
+            {"code": 0, "data": {"active": True, "today_checked_in": True}},
+        ])
+
+        with patch("src.checkin_manager.asyncio.sleep", new_callable=AsyncMock) as sleep, \
+                patch.object(manager, "_push_bark", new_callable=AsyncMock):
+            status = await manager.run_all(scheduled=True)
+
+        self.assertEqual(status["accounts"][0]["status"], "claimed")
+        self.assertIsNone(manager.state["scheduled_retry_at"])
+        sleep.assert_awaited_once_with(2)
+        self.assertEqual(len(calls), 4)
+
+    async def test_scheduled_timeout_is_retried_later(self):
+        manager, calls = self.make_manager([
+            httpx.ReadTimeout(""),
+            httpx.ReadTimeout(""),
+            httpx.ReadTimeout(""),
+            {"code": 0, "data": {"active": True, "today_checked_in": True}},
+        ])
+
+        with patch("src.checkin_manager.asyncio.sleep", new_callable=AsyncMock), \
+                patch.object(manager, "_push_bark", new_callable=AsyncMock):
+            first = await manager.run_all(scheduled=True)
+        self.assertEqual(first["accounts"][0]["status"], "error")
+        self.assertIn("ReadTimeout", first["accounts"][0]["message"])
+        retry_at = manager.state["scheduled_retry_at"]
+        self.assertIsNotNone(retry_at)
+        self.assertEqual(
+            manager._next_run_datetime(datetime.fromtimestamp(retry_at, CHINA_TIMEZONE)),
+            datetime.fromtimestamp(retry_at, CHINA_TIMEZONE),
+        )
+
+        with patch.object(manager, "_push_bark", new_callable=AsyncMock):
+            second = await manager.run_all(scheduled=True)
+        self.assertEqual(second["accounts"][0]["status"], "already_checked_in")
+        self.assertIsNone(manager.state["scheduled_retry_at"])
+        self.assertEqual(len(calls), 4)
 
     def test_next_run_waits_until_scheduled_time(self):
         manager, _ = self.make_manager([])

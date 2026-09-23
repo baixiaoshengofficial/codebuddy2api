@@ -28,11 +28,18 @@ class CheckinError(RuntimeError):
     """Raised when the upstream check-in API returns an error."""
 
 
+class RetryableCheckinError(CheckinError):
+    """Raised when the upstream check-in API is temporarily unavailable."""
+
+
 class CodeBuddyCheckinManager:
     STATUS_PATH = "/v2/billing/meter/checkin-activity-status"
     CLAIM_PATH = "/v2/billing/meter/daily-checkin"
     # Upstream daily-checkin business code when the account already claimed today.
     ALREADY_CHECKED_IN_CODES = {10001}
+    RETRY_DELAYS = (2, 5)
+    SCHEDULED_RETRY_DELAY = 300
+    MAX_SCHEDULED_RETRIES = 3
 
     def __init__(
         self,
@@ -46,6 +53,8 @@ class CodeBuddyCheckinManager:
         self.state: Dict[str, Any] = {
             "last_run_at": None,
             "last_scheduled_date": None,
+            "scheduled_retry_at": None,
+            "scheduled_retry_count": 0,
             "accounts": {},
         }
         self._run_lock = asyncio.Lock()
@@ -144,6 +153,8 @@ class CodeBuddyCheckinManager:
             headers=CodeBuddyCheckinManager._workbuddy_headers(credential, token),
             json={},
         )
+        if response.status_code == 429 or response.status_code >= 500:
+            raise RetryableCheckinError(f"签到接口 HTTP {response.status_code}")
         try:
             payload = response.json()
         except ValueError as exc:
@@ -152,8 +163,6 @@ class CodeBuddyCheckinManager:
         if not isinstance(payload, dict):
             raise CheckinError("签到接口返回了无效数据")
         # Upstream often returns business failures as HTTP 400 with {code,msg}.
-        if response.status_code >= 500:
-            raise CheckinError(f"签到接口 HTTP {response.status_code}")
         return payload
 
     @classmethod
@@ -227,6 +236,24 @@ class CodeBuddyCheckinManager:
             result["daily_credit"] = data["credit"]
 
     async def _check_account(
+        self,
+        client: httpx.AsyncClient,
+        record: Dict[str, Any],
+    ) -> Dict[str, Any]:
+        for attempt in range(len(self.RETRY_DELAYS) + 1):
+            result = await self._check_account_once(client, record)
+            if not result.get("retryable"):
+                return result
+            if attempt < len(self.RETRY_DELAYS):
+                delay = self.RETRY_DELAYS[attempt]
+                logger.warning(
+                    "Transient check-in failure for %s: %s; retrying in %ss",
+                    record["filename"], result["message"], delay,
+                )
+                await asyncio.sleep(delay)
+        return result
+
+    async def _check_account_once(
         self,
         client: httpx.AsyncClient,
         record: Dict[str, Any],
@@ -311,6 +338,14 @@ class CodeBuddyCheckinManager:
                 message=f"签到检查失败：{claim_msg or f'业务错误 {claim_code}'}",
             )
             return result
+        except (httpx.TransportError, RetryableCheckinError) as exc:
+            detail = str(exc) or type(exc).__name__
+            result.update(
+                status="error",
+                message=f"签到检查失败：{detail}",
+                retryable=True,
+            )
+            return result
         except httpx.HTTPStatusError as exc:
             detail = f"HTTP {exc.response.status_code}"
         except (httpx.HTTPError, CheckinError, ValueError) as exc:
@@ -355,7 +390,27 @@ class CodeBuddyCheckinManager:
                 }
                 self.state["last_run_at"] = int(time.time())
                 if scheduled:
+                    previous_attempts = (
+                        int(self.state.get("scheduled_retry_count") or 0)
+                        if self.state.get("last_scheduled_date") == today else 0
+                    )
                     self.state["last_scheduled_date"] = today
+                    if (
+                        any(item.get("retryable") for item in results)
+                        and previous_attempts < self.MAX_SCHEDULED_RETRIES
+                    ):
+                        self.state["scheduled_retry_count"] = previous_attempts + 1
+                        self.state["scheduled_retry_at"] = (
+                            int(time.time()) + self.SCHEDULED_RETRY_DELAY
+                        )
+                    else:
+                        self.state["scheduled_retry_count"] = 0
+                        self.state["scheduled_retry_at"] = None
+                elif self.state.get("last_scheduled_date") == today and not any(
+                    item.get("retryable") for item in results
+                ):
+                    self.state["scheduled_retry_at"] = None
+                    self.state["scheduled_retry_count"] = 0
                 self._save_state()
                 logger.info(
                     "Automatic check-in completed: %s",
@@ -424,6 +479,9 @@ class CodeBuddyCheckinManager:
         today_target = current.replace(hour=hour, minute=minute, second=0, microsecond=0)
         today = current.date().isoformat()
         if self.state.get("last_scheduled_date") == today:
+            retry_at = self.state.get("scheduled_retry_at")
+            if retry_at:
+                return datetime.fromtimestamp(retry_at, CHINA_TIMEZONE)
             return today_target + timedelta(days=1)
         if current < today_target:
             return today_target

@@ -11,8 +11,8 @@ APP_USER="appuser"
 # which would prevent the non-root application user from writing files into it.
 # We apply this to all potential volume mount points.
 echo "Ensuring ownership of mounted directories..."
+mkdir -p /app/config /app/.codebuddy_creds /app/.workbuddy_creds
 chown -R ${APP_USER}:${APP_USER} /app/config
-mkdir -p /app/.codebuddy_creds /app/.workbuddy_creds
 chown -R ${APP_USER}:${APP_USER} /app/.codebuddy_creds
 chown -R ${APP_USER}:${APP_USER} /app/.workbuddy_creds
 echo "Ownership fixed."

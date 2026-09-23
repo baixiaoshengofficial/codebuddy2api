@@ -35,6 +35,11 @@ Thumbs.db
 *.env.*
 !.env.example
 
+# Runtime configuration and credentials (provided by volumes)
+config/
+.codebuddy_creds/
+.workbuddy_creds/
+
 # Log files
 *.log
 logs/
