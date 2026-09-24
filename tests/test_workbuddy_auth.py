@@ -82,6 +82,30 @@ class WorkBuddyTokenManagerTests(unittest.TestCase):
         self.assertTrue(manager.delete_credential_by_index(0))
         self.assertEqual(manager.get_credentials_info(), [])
 
+    def test_reauthorization_replaces_existing_account(self):
+        temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        manager = WorkBuddyTokenManager(creds_dir=temporary.name)
+        self.assertTrue(manager.add_credential_with_data({
+            "bearer_token": "old-token",
+            "refresh_token": "old-refresh",
+            "user_id": "uid-1",
+            "domain": "www.codebuddy.cn",
+        }, filename="old-account.json"))
+
+        self.assertTrue(manager.add_credential_with_data({
+            "bearer_token": "new-token",
+            "refresh_token": "new-refresh",
+            "user_id": "uid-1",
+            "domain": "www.codebuddy.cn",
+        }, filename="new-account.json"))
+
+        records = manager.get_credential_records()
+        self.assertEqual(len(records), 1)
+        self.assertEqual(records[0]["filename"], "old-account.json")
+        self.assertEqual(records[0]["data"]["bearer_token"], "new-token")
+        self.assertFalse(os.path.exists(os.path.join(temporary.name, "new-account.json")))
+
 
 class CheckinUsesWorkBuddyStoreTests(unittest.IsolatedAsyncioTestCase):
     async def test_checkin_reads_workbuddy_manager(self):

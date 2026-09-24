@@ -118,6 +118,28 @@ class WorkBuddyTokenManager:
         credential_data.setdefault("product", "WorkBuddy")
         credential_data.setdefault("created_at", int(time.time()))
 
+        new_user_info = credential_data.get("user_info")
+        new_user_info = new_user_info if isinstance(new_user_info, dict) else {}
+        new_phone = self._get_phone(credential_data, new_user_info)
+        for existing in self.credentials:
+            stored = existing["data"]
+            if stored.get("domain") != credential_data.get("domain"):
+                continue
+            stored_user_info = stored.get("user_info")
+            stored_user_info = stored_user_info if isinstance(stored_user_info, dict) else {}
+            stored_phone = self._get_phone(stored, stored_user_info)
+            same_user = (
+                credential_data.get("user_id") not in (None, "", "unknown")
+                and stored.get("user_id") == credential_data.get("user_id")
+            )
+            if same_user or (new_phone and stored_phone == new_phone):
+                try:
+                    self.update_credential(os.path.basename(existing["file_path"]), credential_data)
+                    return True
+                except Exception as exc:
+                    logger.error("Failed to replace WorkBuddy credential: %s", exc)
+                    return False
+
         if not filename:
             user_id = credential_data.get("user_id", "unknown")
             timestamp = credential_data.get("created_at", int(time.time()))
@@ -136,6 +158,26 @@ class WorkBuddyTokenManager:
         except Exception as exc:
             logger.error("Failed to save WorkBuddy credential: %s", exc)
             return False
+
+    def update_credential(self, filename: str, updates: Dict[str, Any]) -> Dict[str, Any]:
+        """Atomically persist refreshed tokens without changing the account file."""
+        if os.path.basename(filename) != filename:
+            raise ValueError("Invalid WorkBuddy credential filename")
+        file_path = os.path.join(self.creds_dir, filename)
+        with open(file_path, "r", encoding="utf-8") as handle:
+            data = json.load(handle)
+        data.update(updates)
+        temporary = f"{file_path}.tmp"
+        try:
+            with open(temporary, "w", encoding="utf-8") as handle:
+                json.dump(data, handle, indent=4, ensure_ascii=False)
+            os.chmod(temporary, 0o600)
+            os.replace(temporary, file_path)
+        finally:
+            if os.path.exists(temporary):
+                os.remove(temporary)
+        self.load_all_tokens()
+        return data
 
     def delete_credential_by_index(self, index: int) -> bool:
         try:

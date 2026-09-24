@@ -18,6 +18,7 @@ from config import (
     get_checkin_time,
     get_codebuddy_api_endpoint,
 )
+from .credential_utils import decode_jwt_claims
 from .workbuddy_token_manager import workbuddy_token_manager
 
 logger = logging.getLogger(__name__)
@@ -35,11 +36,14 @@ class RetryableCheckinError(CheckinError):
 class CodeBuddyCheckinManager:
     STATUS_PATH = "/v2/billing/meter/checkin-activity-status"
     CLAIM_PATH = "/v2/billing/meter/daily-checkin"
+    REFRESH_PATH = "/v2/plugin/auth/token/refresh"
     # Upstream daily-checkin business code when the account already claimed today.
     ALREADY_CHECKED_IN_CODES = {10001}
     RETRY_DELAYS = (2, 5)
     SCHEDULED_RETRY_DELAY = 300
     MAX_SCHEDULED_RETRIES = 3
+    REFRESH_INTERVAL = 20 * 60 * 60
+    REFRESH_REALM_HOSTS = {"www.codebuddy.cn", "www.codebuddy.ai", "www.workbuddy.ai"}
 
     def __init__(
         self,
@@ -153,6 +157,8 @@ class CodeBuddyCheckinManager:
             headers=CodeBuddyCheckinManager._workbuddy_headers(credential, token),
             json={},
         )
+        if response.status_code == 401:
+            response.raise_for_status()
         if response.status_code == 429 or response.status_code >= 500:
             raise RetryableCheckinError(f"签到接口 HTTP {response.status_code}")
         try:
@@ -240,6 +246,58 @@ class CodeBuddyCheckinManager:
         client: httpx.AsyncClient,
         record: Dict[str, Any],
     ) -> Dict[str, Any]:
+        credential = record["data"]
+        last_refresh_at = int(
+            credential.get("last_refresh_at") or credential.get("created_at") or 0
+        )
+        refresh_attempted = False
+        if (
+            credential.get("refresh_token")
+            and int(time.time()) - last_refresh_at >= self.REFRESH_INTERVAL
+        ):
+            refresh_attempted = True
+            try:
+                await self._refresh_credential(client, record)
+            except (httpx.TransportError, RetryableCheckinError) as exc:
+                refresh_attempted = False
+                logger.warning("WorkBuddy keepalive failed for %s: %s", record["filename"], exc)
+            except (httpx.HTTPStatusError, CheckinError, ValueError) as exc:
+                logger.warning("WorkBuddy keepalive rejected for %s: %s", record["filename"], exc)
+            except OSError as exc:
+                logger.error("Unable to save WorkBuddy token for %s: %s", record["filename"], exc)
+        for refresh_attempt in range(2):
+            result = await self._check_account_with_retries(client, record)
+            auth_failed = result.pop("_auth_failed", False)
+            if not auth_failed and result.get("status") != "expired":
+                return result
+            if refresh_attempt or refresh_attempted or not record["data"].get("refresh_token"):
+                result.update(status="expired", message="签到凭证已失效，请重新授权 WorkBuddy")
+                return result
+            try:
+                await self._refresh_credential(client, record)
+            except (httpx.TransportError, RetryableCheckinError) as exc:
+                detail = str(exc) or type(exc).__name__
+                result.update(
+                    status="error",
+                    message=f"刷新签到凭证失败：{detail}",
+                    retryable=True,
+                )
+                return result
+            except OSError as exc:
+                result.update(status="error", message=f"保存签到凭证失败：{exc}")
+                return result
+            except (httpx.HTTPStatusError, CheckinError, ValueError) as exc:
+                logger.warning("WorkBuddy token refresh rejected for %s: %s", record["filename"], exc)
+                result.update(status="expired", message="签到凭证刷新被拒绝，请重新授权 WorkBuddy")
+                return result
+            logger.info("Refreshed WorkBuddy token for %s", record["filename"])
+        return result
+
+    async def _check_account_with_retries(
+        self,
+        client: httpx.AsyncClient,
+        record: Dict[str, Any],
+    ) -> Dict[str, Any]:
         for attempt in range(len(self.RETRY_DELAYS) + 1):
             result = await self._check_account_once(client, record)
             if not result.get("retryable"):
@@ -252,6 +310,70 @@ class CodeBuddyCheckinManager:
                 )
                 await asyncio.sleep(delay)
         return result
+
+    async def _refresh_credential(
+        self,
+        client: httpx.AsyncClient,
+        record: Dict[str, Any],
+    ) -> None:
+        credential = record["data"]
+        domain = str(credential.get("domain") or "")
+        realm = (
+            f"https://{domain}"
+            if domain in self.REFRESH_REALM_HOSTS
+            else get_codebuddy_api_endpoint().rstrip("/")
+        )
+        headers = {
+            "Accept": "application/json, text/plain, */*",
+            "Content-Type": "application/json",
+            "X-Requested-With": "XMLHttpRequest",
+            "Origin": realm,
+            "Referer": f"{realm}/",
+            "User-Agent": "WorkBuddy/5.2.5",
+            "X-Refresh-Token": credential["refresh_token"],
+            "X-Auth-Refresh-Source": "workbuddy",
+        }
+        enterprise_id = credential.get("enterprise_id") or credential.get("enterpriseId")
+        if enterprise_id:
+            headers["X-Enterprise-Id"] = str(enterprise_id)
+        response = await client.post(f"{realm}{self.REFRESH_PATH}", headers=headers, json={})
+        if response.status_code in (401, 403):
+            raise CheckinError(f"刷新接口 HTTP {response.status_code}")
+        if response.status_code == 429 or response.status_code >= 500:
+            raise RetryableCheckinError(f"刷新接口 HTTP {response.status_code}")
+        response.raise_for_status()
+        try:
+            payload = response.json()
+        except ValueError as exc:
+            raise CheckinError("刷新接口返回了非 JSON 响应") from exc
+        if not isinstance(payload, dict) or payload.get("code") not in (0, 200):
+            message = payload.get("msg") or payload.get("message") if isinstance(payload, dict) else None
+            raise CheckinError(str(message or "刷新接口拒绝了凭证"))
+        data = payload.get("data")
+        if not isinstance(data, dict) or not data.get("accessToken"):
+            raise CheckinError("刷新接口未返回新凭证")
+        new_token = data["accessToken"]
+        now = int(time.time())
+        expires_in = data.get("expiresIn")
+        if not expires_in:
+            expires_at = decode_jwt_claims(new_token).get("exp")
+            expires_in = max(0, int(expires_at) - now) if expires_at else None
+        updates = {
+            "bearer_token": new_token,
+            "created_at": now,
+            "last_refresh_at": now,
+        }
+        if "access_token" in credential:
+            updates["access_token"] = new_token
+        if data.get("refreshToken"):
+            updates["refresh_token"] = data["refreshToken"]
+        if expires_in:
+            updates["expires_in"] = int(expires_in)
+        if data.get("domain"):
+            updates["domain"] = data["domain"]
+        if not hasattr(self.token_manager, "update_credential"):
+            raise CheckinError("WorkBuddy 凭证管理器不支持保存刷新结果")
+        record["data"] = self.token_manager.update_credential(record["filename"], updates)
 
     async def _check_account_once(
         self,
@@ -347,6 +469,9 @@ class CodeBuddyCheckinManager:
             )
             return result
         except httpx.HTTPStatusError as exc:
+            if exc.response.status_code == 401:
+                result.update(status="expired", message="签到凭证已失效", _auth_failed=True)
+                return result
             detail = f"HTTP {exc.response.status_code}"
         except (httpx.HTTPError, CheckinError, ValueError) as exc:
             detail = str(exc)

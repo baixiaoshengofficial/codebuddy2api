@@ -1,6 +1,7 @@
 import json
 import os
 import tempfile
+import time
 import unittest
 from datetime import datetime
 from unittest.mock import AsyncMock, patch
@@ -20,6 +21,11 @@ class FakeTokenManager:
     def is_token_expired(self, _credential):
         return False
 
+    def update_credential(self, filename, updates):
+        record = next(item for item in self.credentials if item["filename"] == filename)
+        record["data"].update(updates)
+        return dict(record["data"])
+
 
 class CheckinManagerTests(unittest.IsolatedAsyncioTestCase):
     def make_manager(self, responses):
@@ -30,6 +36,7 @@ class CheckinManagerTests(unittest.IsolatedAsyncioTestCase):
         def handler(request):
             calls.append({
                 "path": request.url.path,
+                "host": request.url.host,
                 "headers": {k: v for k, v in request.headers.items()},
             })
             body = responses.pop(0)
@@ -48,6 +55,7 @@ class CheckinManagerTests(unittest.IsolatedAsyncioTestCase):
                 "bearer_token": "secret",
                 "user_id": "user-1",
                 "domain": "copilot.tencent.com",
+                "created_at": int(time.time()),
             },
         }]
         manager = CodeBuddyCheckinManager(
@@ -194,6 +202,66 @@ class CheckinManagerTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(second["accounts"][0]["status"], "already_checked_in")
         self.assertIsNone(manager.state["scheduled_retry_at"])
         self.assertEqual(len(calls), 4)
+
+    async def test_unauthorized_account_refreshes_token_and_claims(self):
+        manager, calls = self.make_manager([
+            (401, {"code": 401, "msg": "invalid token"}),
+            {"code": 0, "data": {
+                "accessToken": "new-access-token",
+                "refreshToken": "new-refresh-token",
+                "expiresIn": 3600,
+            }},
+            {"code": 0, "data": {"active": True, "today_checked_in": False}},
+            {"code": 0, "data": {"credit": 100}},
+            {"code": 0, "data": {"active": True, "today_checked_in": True}},
+        ])
+        manager.token_manager.credentials[0]["data"]["refresh_token"] = "old-refresh-token"
+
+        status = await manager.run_all(force=True)
+
+        self.assertEqual(status["accounts"][0]["status"], "claimed")
+        self.assertEqual(self._paths(calls)[1], manager.REFRESH_PATH)
+        self.assertEqual(calls[1]["headers"]["x-refresh-token"], "old-refresh-token")
+        self.assertNotIn("authorization", calls[1]["headers"])
+        self.assertEqual(calls[2]["headers"]["authorization"], "Bearer new-access-token")
+        self.assertEqual(manager.token_manager.credentials[0]["data"]["refresh_token"], "new-refresh-token")
+
+    async def test_refresh_rejection_requests_new_authorization(self):
+        manager, calls = self.make_manager([
+            (401, {"code": 401, "msg": "invalid token"}),
+            (401, {"code": 401, "msg": "invalid refresh token"}),
+        ])
+        manager.token_manager.credentials[0]["data"]["refresh_token"] = "old-refresh-token"
+
+        status = await manager.run_all(force=True)
+
+        self.assertEqual(status["accounts"][0]["status"], "expired")
+        self.assertIn("重新授权", status["accounts"][0]["message"])
+        self.assertEqual(self._paths(calls), [manager.STATUS_PATH, manager.REFRESH_PATH])
+
+    async def test_proactive_refresh_uses_account_realm(self):
+        manager, calls = self.make_manager([
+            {"code": 0, "data": {
+                "accessToken": "new-access-token",
+                "refreshToken": "new-refresh-token",
+                "expiresIn": 3600,
+            }},
+            {"code": 0, "data": {"active": True, "today_checked_in": True}},
+        ])
+        credential = manager.token_manager.credentials[0]["data"]
+        credential.update({
+            "domain": "www.codebuddy.cn",
+            "refresh_token": "old-refresh-token",
+            "created_at": int(time.time()) - 86400,
+        })
+
+        status = await manager.run_all(force=True)
+
+        self.assertEqual(status["accounts"][0]["status"], "already_checked_in")
+        self.assertEqual(self._paths(calls), [manager.REFRESH_PATH, manager.STATUS_PATH])
+        self.assertEqual(calls[0]["host"], "www.codebuddy.cn")
+        self.assertNotIn("authorization", calls[0]["headers"])
+        self.assertEqual(calls[1]["headers"]["authorization"], "Bearer new-access-token")
 
     def test_next_run_waits_until_scheduled_time(self):
         manager, _ = self.make_manager([])
