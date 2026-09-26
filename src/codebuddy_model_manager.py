@@ -55,10 +55,24 @@ class CodeBuddyModelManager:
     def __init__(self):
         self._cache: Dict[str, Dict[str, Any]] = {}
         self._lock = asyncio.Lock()
+        self._refresh_tasks: Dict[str, asyncio.Task] = {}
 
     async def get_models(self, force_refresh: bool = False) -> List[str]:
         site = get_codebuddy_site()
         cached = self._cache.get(site)
+        if not force_refresh:
+            if not cached:
+                cached = {
+                    "models": FALLBACK_MODELS.get(site) or FALLBACK_MODELS["international"],
+                    "fetched_at": 0,
+                }
+                self._cache[site] = cached
+            if time.time() - cached["fetched_at"] >= MODEL_CACHE_TTL_SECONDS:
+                task = self._refresh_tasks.get(site)
+                if not task or task.done():
+                    task = asyncio.create_task(self.get_models(force_refresh=True))
+                    self._refresh_tasks[site] = task
+            return cached["models"]
         if (
             cached
             and not force_refresh

@@ -6,6 +6,7 @@ import glob
 import json
 import time
 import logging
+import tempfile
 from typing import Dict, Optional, List, Any
 from .usage_stats_manager import usage_stats_manager
 from .credential_utils import build_credential_filename, resolve_project_path
@@ -134,6 +135,8 @@ class CodeBuddyTokenManager:
     def is_token_expired(self, credential_data: Dict) -> bool:
         """检查token是否过期"""
         try:
+            if credential_data.get('session_dead_at'):
+                return True
             created_at = credential_data.get('created_at')
             expires_in = credential_data.get('expires_in')
             
@@ -156,6 +159,11 @@ class CodeBuddyTokenManager:
         except Exception as e:
             logger.error(f"Error checking token expiry: {e}")
             return False
+
+    def _can_use_credential(self, credential_data: Dict) -> bool:
+        if credential_data.get('session_dead_at'):
+            return False
+        return bool(credential_data.get('refresh_token')) or not self.is_token_expired(credential_data)
     
     def _is_on_cooldown(self, index: int) -> bool:
         """检查凭证是否处于 cooldown（额度耗尽临时跳过）"""
@@ -185,7 +193,7 @@ class CodeBuddyTokenManager:
         # 过滤掉过期的凭证
         valid_credentials = []
         for i, cred in enumerate(self.credentials):
-            if not self.is_token_expired(cred['data']):
+            if self._can_use_credential(cred['data']):
                 valid_credentials.append((i, cred))
             else:
                 filename = os.path.basename(cred['file_path'])
@@ -200,7 +208,7 @@ class CodeBuddyTokenManager:
             mi = self.manual_selected_index
             if 0 <= mi < len(self.credentials):
                 manual_cred = self.credentials[mi]
-                if not self.is_token_expired(manual_cred['data']):
+                if self._can_use_credential(manual_cred['data']):
                     credential_filename = os.path.basename(manual_cred['file_path'])
                     usage_stats_manager.record_credential_usage(credential_filename)
                     logger.info(f"Using manually selected credential: {credential_filename}")
@@ -270,7 +278,7 @@ class CodeBuddyTokenManager:
             return None
 
         credential = self.credentials[index]
-        if self.is_token_expired(credential['data']):
+        if not self._can_use_credential(credential['data']):
             logger.warning(
                 "Requested credential is expired: %s",
                 os.path.basename(credential['file_path']),
@@ -358,6 +366,28 @@ class CodeBuddyTokenManager:
     
     def add_credential_with_data(self, credential_data: Dict[str, Any], filename: str = None) -> bool:
         """添加新的凭证（完整数据版本）"""
+        credential_data = dict(credential_data)
+        user_id = credential_data.get('user_id')
+        domain = credential_data.get('domain')
+        if user_id and user_id != 'unknown':
+            for existing in self.credentials:
+                stored = existing['data']
+                if stored.get('user_id') == user_id and stored.get('domain') == domain:
+                    try:
+                        remove_keys = ['session_dead_at', 'session_dead_reason']
+                        if not credential_data.get('expires_in'):
+                            remove_keys.append('expires_in')
+                        if not credential_data.get('refresh_token'):
+                            remove_keys.append('refresh_token')
+                        self.update_credential(
+                            os.path.basename(existing['file_path']),
+                            credential_data,
+                            remove_keys=remove_keys,
+                        )
+                        return True
+                    except Exception as exc:
+                        logger.error('Failed to replace CodeBuddy credential: %s', exc)
+                        return False
         if not filename:
             user_id = credential_data.get('user_id', 'unknown')
             timestamp = credential_data.get('created_at', int(time.time()))
@@ -386,6 +416,42 @@ class CodeBuddyTokenManager:
         except Exception as e:
             logger.error(f"Failed to save credential: {e}")
             return False
+
+    def update_credential(
+        self,
+        filename: str,
+        updates: Dict[str, Any],
+        remove_keys=(),
+    ) -> Dict[str, Any]:
+        """Persist refreshed credentials and update the in-memory copy."""
+        if os.path.basename(filename) != filename:
+            raise ValueError('Invalid CodeBuddy credential filename')
+        path = os.path.join(self.creds_dir, filename)
+        with open(path, 'r', encoding='utf-8') as handle:
+            data = json.load(handle)
+        data.update(updates)
+        for key in remove_keys:
+            data.pop(key, None)
+        descriptor, temporary = tempfile.mkstemp(dir=self.creds_dir, prefix='.credential-')
+        try:
+            os.fchmod(descriptor, 0o600)
+            with os.fdopen(descriptor, 'w', encoding='utf-8') as handle:
+                json.dump(data, handle, indent=4, ensure_ascii=False)
+            os.replace(temporary, path)
+        finally:
+            if os.path.exists(temporary):
+                os.remove(temporary)
+        for credential in self.credentials:
+            if os.path.basename(credential['file_path']) == filename:
+                credential['data'] = data
+                break
+        return dict(data)
+
+    def mark_session_dead(self, filename: str) -> None:
+        self.update_credential(filename, {
+            'session_dead_at': int(time.time()),
+            'session_dead_reason': '12153',
+        })
 
     def delete_credential_by_index(self, index: int) -> bool:
         """删除指定索引的凭证文件，并重新加载列表"""

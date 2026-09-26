@@ -15,6 +15,7 @@ from src.workbuddy_auth_router import router as workbuddy_auth_router
 from src.settings_router import router as settings_router
 from src.frontend_router import router as frontend_router
 from src.checkin_manager import checkin_manager
+from src.codebuddy_refresh import codebuddy_credential_refresher
 
 from config import get_server_host, get_server_port, get_log_level
 
@@ -34,8 +35,10 @@ async def lifespan(app: FastAPI):
         # 启动时初始化资源
         await lifecycle_manager.startup()
         await checkin_manager.startup()
+        await codebuddy_credential_refresher.startup()
         yield
     finally:
+        await codebuddy_credential_refresher.shutdown()
         # 关闭时清理资源
         await checkin_manager.shutdown()
         await lifecycle_manager.shutdown()

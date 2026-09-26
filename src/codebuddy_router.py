@@ -20,6 +20,7 @@ from .auth import authenticate
 from .codebuddy_api_client import codebuddy_api_client
 from .codebuddy_model_manager import codebuddy_model_manager
 from .codebuddy_token_manager import codebuddy_token_manager
+from .codebuddy_refresh import SessionExpiredError, codebuddy_credential_refresher
 from .usage_stats_manager import usage_stats_manager
 from .request_log_manager import (
     build_request_preview,
@@ -43,7 +44,7 @@ def get_codebuddy_api_url() -> str:
 
 # --- HTTP 客户端配置 ---
 HTTP_CLIENT_CONFIG = {
-    "timeout": httpx.Timeout(300.0, connect=30.0, read=300.0),
+    "timeout": httpx.Timeout(300.0, connect=8.0, read=300.0),
     "limits": httpx.Limits(max_keepalive_connections=20, max_connections=100)
 }
 
@@ -535,7 +536,15 @@ class CodeBuddyStreamService:
         """处理非流式响应 - 使用修复后的聚合器，支持多工具调用"""
         try:
             client = await get_http_client()
-            response = await client.post(get_codebuddy_api_url(), json=payload, headers=headers)
+            try:
+                response = await client.post(get_codebuddy_api_url(), json=payload, headers=headers)
+            except (httpx.ConnectTimeout, httpx.ConnectError) as exc:
+                logger.warning("CodeBuddy upstream connection failed, retrying once: %s", type(exc).__name__)
+                await asyncio.sleep(0.5)
+                async with httpx.AsyncClient(**HTTP_CLIENT_CONFIG) as retry_client:
+                    response = await retry_client.post(
+                        get_codebuddy_api_url(), json=payload, headers=headers
+                    )
             
             if response.status_code != 200:
                 error_msg = response.text
@@ -561,8 +570,8 @@ class CodeBuddyStreamService:
             
             return aggregator.finalize()
             
-        except httpx.TimeoutException:
-            logger.error("CodeBuddy API 超时")
+        except httpx.TimeoutException as exc:
+            logger.error("CodeBuddy API 超时: %s", type(exc).__name__)
             raise HTTPException(status_code=504, detail="CodeBuddy API timeout")
         except httpx.NetworkError as e:
             logger.error(f"网络错误: {e}")
@@ -639,6 +648,19 @@ class CredentialManager:
         except Exception as e:
             logger.error(f"获取凭证失败: {e}")
             raise HTTPException(status_code=401, detail="凭证获取失败")
+
+
+async def get_ready_credential(credential_index: Optional[int] = None) -> Dict[str, Any]:
+    """Refresh old sessions and move past revoked accounts in auto mode."""
+    attempts = 1 if credential_index is not None else max(1, len(codebuddy_token_manager.credentials))
+    for _ in range(attempts):
+        credential = CredentialManager.get_valid_credential(credential_index)
+        try:
+            return await codebuddy_credential_refresher.ensure_fresh(credential)
+        except SessionExpiredError:
+            if credential_index is not None:
+                break
+    raise HTTPException(status_code=401, detail="CodeBuddy 凭证已失效，请重新授权")
 
 def create_endpoint_probe(endpoint: str) -> Dict[str, Any]:
     """Return a small unauthenticated probe response for endpoint speed checks."""
@@ -945,7 +967,7 @@ async def chat_completions(
             raise HTTPException(status_code=422, detail="_credential_index must be an integer")
         
         # 获取有效凭证
-        credential = CredentialManager.get_valid_credential(credential_index)
+        credential = await get_ready_credential(credential_index)
         
         # 预处理请求并创建持久化请求明细
         payload = RequestProcessor.prepare_payload(request_body)
@@ -1021,7 +1043,7 @@ async def responses(
         chat_request = responses_request_to_chat_request(request_body)
         RequestProcessor.validate_request(chat_request)
 
-        credential = CredentialManager.get_valid_credential()
+        credential = await get_ready_credential()
         payload = RequestProcessor.prepare_payload(chat_request)
         audit = start_request_audit(
             request,
