@@ -1,4 +1,4 @@
-FROM node:22-alpine AS frontend-builder
+FROM hub.baixiaosheng.de/node:22-alpine AS frontend-builder
 
 WORKDIR /frontend
 COPY frontend/package.json frontend/package-lock.json ./
@@ -7,7 +7,7 @@ COPY frontend/ ./
 RUN npm run build
 
 # 使用官方的、轻量级的 Python 镜像作为基础
-FROM python:3.11-slim
+FROM hub.baixiaosheng.de/python:3.11-slim
 
 # 设置容器内的工作目录
 WORKDIR /app
