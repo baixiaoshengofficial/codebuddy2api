@@ -25,7 +25,6 @@ SETTING_LABELS = {
     "CODEBUDDY_CREDS_DIR": "CodeBuddy 凭证文件目录",
     "WORKBUDDY_CREDS_DIR": "WorkBuddy 签到凭证目录",
     "CODEBUDDY_LOG_LEVEL": "日志级别",
-    "CODEBUDDY_ROTATION_COUNT": "凭证轮换频率 (N次请求/凭证，设为0关闭轮换)",
     "CODEBUDDY_AUTO_CHECKIN": "自动领取每日签到奖励",
     "CODEBUDDY_CHECKIN_TIME": "每日自动签到时间（北京时间 HH:MM）",
     "CODEBUDDY_BARK_URL": "签到结果 Bark 推送地址",

@@ -43,7 +43,6 @@ _DEFAULT_CONFIG = {
     "CODEBUDDY_CREDS_DIR": ".codebuddy_creds",
     "WORKBUDDY_CREDS_DIR": ".workbuddy_creds",
     "CODEBUDDY_LOG_LEVEL": "INFO",
-    "CODEBUDDY_ROTATION_COUNT": 1,
     "CODEBUDDY_AUTO_CHECKIN": "true",
     "CODEBUDDY_CHECKIN_TIME": "11:00",
     "CODEBUDDY_BARK_URL": "",
@@ -195,9 +194,6 @@ def get_workbuddy_creds_dir() -> str:
 
 def get_log_level() -> str:
     return str(_get_config_value("CODEBUDDY_LOG_LEVEL")).upper()
-
-def get_rotation_count() -> int:
-    return int(_get_config_value("CODEBUDDY_ROTATION_COUNT"))
 
 def get_auto_checkin_enabled() -> bool:
     value = str(_get_config_value("CODEBUDDY_AUTO_CHECKIN")).strip().lower()

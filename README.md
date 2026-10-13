@@ -10,7 +10,7 @@
 - 🔐 **双重认证机制**：
     - **服务访问认证**：通过环境变量设置密码，保护整个代理服务。
     - **CodeBuddy 官方认证**：在后端安全地管理和使用 CodeBuddy 的 `Bearer Token`。
-- 🔄 **凭证自动轮换**：支持在 `.codebuddy_creds` 目录中配置多个 CodeBuddy 认证凭证，服务会自动轮换使用，有效提高可用性和分担请求压力。
+- 🔄 **凭证自动切换**：支持在 `.codebuddy_creds` 目录中配置多个 CodeBuddy 认证凭证。当前凭证积分不足时，服务会切换到下一个可用凭证并重试请求。
 - 🎁 **每日自动签到**：通过独立的 WorkBuddy 授权获取签到凭证，按北京时间定点领取 Credits，并将结果推送到 Bark。
 - 🌐 **Web 管理界面**：内置一个美观、易用的 Web UI，方便用户管理凭证、测试 API 和查看服务状态。
 
@@ -184,7 +184,7 @@ curl -sS -X POST 'http://192.168.100.3:8001/codebuddy/v1/chat/completions' \
 - `GET /codebuddy/v1/responses`: 轻量探测接口，供 cc-switch 等工具测速。
 - `POST /codebuddy/v1/responses`: 最小 Responses 兼容接口，用于 Codex/cc-switch 连通性探测和简单请求。
 - `GET /codebuddy/v1/credentials`: （需要认证）在 Web UI 中用于列出所有凭证。
-- `POST /codebuddy/v1/credentials/set-mode`: （需要认证）切换自动轮换或锁定指定凭证。
+- `POST /codebuddy/v1/credentials/set-mode`: （需要认证）切换积分不足时自动切换或锁定指定凭证。
 - `GET /codebuddy/v1/credentials/current`: （需要认证）查看当前使用的凭证。
 - `POST /codebuddy/v1/credentials/delete`: （需要认证）删除指定凭证。
 - `GET /api/checkin`: （需要认证）查看自动签到计划及逐账号状态。
@@ -202,7 +202,7 @@ codebuddy2api/
 │   ├── auth.py                    # 服务访问认证模块
 │   ├── codebuddy_api_client.py    # 封装了与CodeBuddy官方API的通信
 │   ├── codebuddy_auth_router.py   # CodeBuddy OAuth2 认证路由
-│   ├── codebuddy_token_manager.py # CodeBuddy凭证加载与轮换管理器
+│   ├── codebuddy_token_manager.py # CodeBuddy凭证加载与切换管理器
 │   ├── checkin_manager.py          # WorkBuddy 自动签到管理器
 │   ├── workbuddy_auth_router.py    # WorkBuddy 签到授权
 │   ├── workbuddy_token_manager.py  # WorkBuddy 签到凭证存储
@@ -228,7 +228,7 @@ codebuddy2api/
 
 ## 🧭 架构与维护
 
-CodeBuddy 与 WorkBuddy 是两个独立的账号域：前者仅用于 OpenAI 兼容 API 的凭证轮换，后者仅用于每日签到。管理端也按这两个账号域分别展示、授权和操作。
+CodeBuddy 与 WorkBuddy 是两个独立的账号域：前者用于 OpenAI 兼容 API 的凭证切换，后者仅用于每日签到。管理端也按这两个账号域分别展示、授权和操作。
 
 核心模块的职责边界、运行期副作用约束和本地验证流程见 [docs/architecture.md](docs/architecture.md)。日常改动请遵循“路由负责 HTTP 编排、管理器负责领域规则、共享工具不依赖具体产品”的原则，避免在路由中混入文件读写或复杂业务逻辑。
 
@@ -253,10 +253,13 @@ cd frontend && npm run build
 | `CODEBUDDY_PORT` | `8001` | 服务监听的端口。 |
 | `CODEBUDDY_SITE` | `china` | CodeBuddy 站点，可选 `international`（国际站）或 `china`（国内站）；API 端点会按站点自动选择。 |
 | `CODEBUDDY_LOG_LEVEL` | `INFO` | 日志级别，可选 `DEBUG`, `INFO`, `WARNING`, `ERROR`。 |
-| `CODEBUDDY_ROTATION_COUNT` | `1` | 凭证轮换计数，每 N 次请求后切换凭证。 |
 | `CODEBUDDY_AUTO_CHECKIN` | `true` | 是否自动检查并领取每日签到奖励。 |
 | `CODEBUDDY_CHECKIN_TIME` | `11:00` | 每日自动签到时间（北京时间 HH:MM）。 |
 | `CODEBUDDY_BARK_URL` | 空 | 签到完成后推送结果的 Bark URL；留空则不推送。 |
+
+自动模式会保持使用当前 CodeBuddy 凭证；上游明确返回积分不足时，服务在 5 分钟内跳过该凭证，切换到下一张可用凭证并重试。旧版 `CODEBUDDY_ROTATION_COUNT` 配置已不再生效。
+
+对话请求遇到连接中断或超时会直接返回错误，不自动重新发送给上游，因为上游可能已经处理并扣除积分。请求明细中的“上游请求次数”（旧版显示 `Attempts`）记录实际上游发送次数；只有明确的积分不足且回复尚未开始生成，才会触发凭证切换和再次发送。
 
 CodeBuddy 和 WorkBuddy 凭证分别固定存放在 `.codebuddy_creds` 与
 `.workbuddy_creds`。Docker 部署时如需从宿主机查看或备份凭证，请修改

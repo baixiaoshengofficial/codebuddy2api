@@ -11,15 +11,15 @@
 | 应用装配 | `web.py` | 创建 FastAPI、注册路由、协调启动与关闭生命周期。 |
 | 服务认证 | `src/auth.py` | 校验管理端与受保护 API 的服务密码。所有受保护路由复用此依赖。 |
 | CodeBuddy API | `src/codebuddy_router.py`、`src/codebuddy_api_client.py`、`src/codebuddy_model_manager.py` | OpenAI 兼容协议转换、上游调用与模型发现。 |
-| CodeBuddy 凭证 | `src/codebuddy_token_manager.py` | CodeBuddy 凭证存储、过期判断、手动选择与自动轮换。 |
-| WorkBuddy 签到 | `src/workbuddy_token_manager.py`、`src/checkin_manager.py` | WorkBuddy 凭证存储和每日签到业务；不参与模型请求轮换。 |
+| CodeBuddy 凭证 | `src/codebuddy_token_manager.py` | CodeBuddy 凭证存储、过期判断、手动选择与积分不足时自动切换。 |
+| WorkBuddy 签到 | `src/workbuddy_token_manager.py`、`src/checkin_manager.py` | WorkBuddy 凭证存储和每日签到业务；不参与模型请求切换。 |
 | 授权流程 | `src/codebuddy_auth_router.py`、`src/workbuddy_auth_router.py` | 分别处理两个产品的上游授权协议，并把获得的 token 交给对应管理器。 |
 | 共享凭证工具 | `src/credential_utils.py` | 相对路径解析、JWT 显示信息解析、凭证文件命名；不依赖 FastAPI 或具体产品。 |
 | 审计与设置 | `src/request_log_manager.py`、`src/settings_router.py`、`config.py` | 请求审计、运行时可修改设置和启动配置。 |
 
 ## 关键约束
 
-- CodeBuddy 与 WorkBuddy 的凭证目录、授权入口与业务用途必须保持独立，不能交叉读取或轮换。
+- CodeBuddy 与 WorkBuddy 的凭证目录、授权入口与业务用途必须保持独立，不能交叉读取或切换。
 - JWT 仅用于解析本地展示身份，不在本地验证上游 token 的签名；上游 token 的有效性由实际 API 调用决定。
 - 模块导入不能产生文件、网络或数据库写入副作用。`RequestLogManager` 在首次记录请求时才创建/迁移 SQLite。
 - 新增 API 时，先把可测试的领域逻辑放到服务/管理器，再在路由中完成参数解析和响应映射。

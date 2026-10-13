@@ -113,6 +113,77 @@ def format_sse_error(message: str, error_type: str = "stream_error") -> str:
     }
     return f'data: {json.dumps(error_data, ensure_ascii=False)}\n\n'
 
+
+class InsufficientCreditError(Exception):
+    """Upstream explicitly reported that this credential has no credits."""
+
+    def __init__(self, message: str, can_retry: bool = True):
+        super().__init__(message)
+        self.can_retry = can_retry
+
+
+def is_insufficient_credit_error(value: Any) -> bool:
+    """Recognize credit errors without treating ordinary rate limits as exhaustion."""
+    if isinstance(value, str):
+        try:
+            value = json.loads(value)
+        except (TypeError, ValueError):
+            pass
+    if isinstance(value, dict):
+        fields = ("code", "type", "message", "msg", "detail", "error_description")
+        parts = [str(value.get(key, "")) for key in fields]
+        error = value.get("error")
+        if isinstance(error, dict):
+            parts.extend(str(error.get(key, "")) for key in fields)
+        elif error is not None:
+            parts.append(str(error))
+        value = " ".join(parts)
+    message = str(value).lower()
+    return any(marker in message for marker in (
+        "积分不足", "积分已耗尽", "余额不足", "额度不足", "点数不足",
+        "insufficient_credit", "insufficient_quota", "insufficient balance",
+        "insufficient credits", "insufficient_balance", "not enough credit",
+        "credit balance is too low",
+        "credits exhausted",
+    ))
+
+
+async def next_credential_after_exhaustion(index: Optional[int]) -> Optional[Dict[str, Any]]:
+    if index is None:
+        return None
+    codebuddy_token_manager.mark_credential_exhausted(index)
+    try:
+        return await get_ready_credential()
+    except HTTPException:
+        return None
+
+
+def headers_for_credential(headers: Dict[str, str], credential: Dict[str, Any]) -> Dict[str, str]:
+    updated = dict(headers)
+    updated["Authorization"] = f"Bearer {credential['bearer_token']}"
+    updated["X-User-Id"] = credential.get("user_id") or updated.get("X-User-Id", "")
+    return updated
+
+
+def has_stream_output(chunk: str) -> bool:
+    """Keep metadata chunks buffered until retry is no longer safe."""
+    if "[DONE]" in chunk:
+        return True
+    event = parse_sse_line(chunk.strip())
+    if not event:
+        return False
+    if event.get("error"):
+        return True
+    return any(
+        choice.get("finish_reason") or any(
+            delta.get(key) for key in (
+                "content", "reasoning_content", "tool_calls", "function_call", "refusal",
+            )
+        )
+        for choice in event.get("choices", [])
+        for delta in [choice.get("delta") or {}]
+    )
+
 class OpenAICompatibilityConverter:
     """将CodeBuddy格式转换为OpenAI兼容格式"""
     
@@ -267,37 +338,6 @@ def validate_and_fix_tool_call_args(args: str) -> str:
         except json.JSONDecodeError:
             return '{}'
 
-class SSEConnectionManager:
-    """SSE 连接管理器，包含重连逻辑"""
-    
-    def __init__(self, max_retries: int = 3, retry_delay: float = 1.0):
-        self.max_retries = max_retries
-        self.retry_delay = retry_delay
-    
-    async def stream_with_retry(self, stream_func, *args, **kwargs):
-        """带重连的流式处理"""
-        for attempt in range(self.max_retries + 1):
-            try:
-                async for chunk in stream_func(*args, **kwargs):
-                    yield chunk
-                break  # 成功完成，退出重试循环
-            except (httpx.TimeoutException, httpx.NetworkError) as e:
-                if attempt < self.max_retries:
-                    wait_time = self.retry_delay * (2 ** attempt)  # 指数退避: 1s, 2s, 4s
-                    logger.warning(f"连接失败，{wait_time}秒后重试 (第{attempt + 1}次): {e}")
-                    yield format_sse_error(f"Connection lost, retrying in {wait_time}s... (attempt {attempt + 1})", "connection_retry")
-                    await asyncio.sleep(wait_time)
-                    continue
-                else:
-                    logger.error(f"重连失败，已达到最大重试次数: {e}")
-                    yield format_sse_error(f"Connection failed after {self.max_retries} retries: {str(e)}", "connection_failed")
-                    raise
-            except Exception as e:
-                # 其他异常不重试，直接抛出
-                logger.error(f"流式处理异常: {e}")
-                yield format_sse_error(f"Stream error: {str(e)}", "stream_error")
-                raise
-
 class StreamResponseAggregator:
     """流式响应聚合器 - 修复多工具调用问题：使用工具调用ID作为键"""
     
@@ -440,7 +480,7 @@ class CodeBuddyStreamService:
     """CodeBuddy 流式服务类 - 职责分离，使用连接池优化"""
     
     def __init__(self):
-        self.connection_manager = SSEConnectionManager(max_retries=3, retry_delay=1.0)
+        self.attempt_count = 0
     
     def _handle_api_error(self, status_code: int, error_msg: str) -> None:
         """统一的API错误处理 - 直接抛出异常"""
@@ -460,14 +500,18 @@ class CodeBuddyStreamService:
         payload: Dict[str, Any],
         headers: Dict[str, str],
         credential_index: Optional[int] = None,
+        retry_on_exhaustion: bool = False,
     ) -> StreamingResponse:
         """处理流式响应 - 使用OpenAI兼容性转换器修复格式问题"""
-        async def stream_core():
+        async def stream_attempt(attempt_headers: Dict[str, str]):
             client = await get_http_client()
-            async with client.stream("POST", get_codebuddy_api_url(), json=payload, headers=headers) as response:
+            self.attempt_count += 1
+            async with client.stream("POST", get_codebuddy_api_url(), json=payload, headers=attempt_headers) as response:
                 if response.status_code != 200:
                     error_text = await response.aread()
                     error_msg = error_text.decode('utf-8', errors='ignore')
+                    if is_insufficient_credit_error(error_msg):
+                        raise InsufficientCreditError(error_msg)
                     yield format_sse_error(f"CodeBuddy API error: {response.status_code} - {error_msg}", "api_error")
                     return
                 
@@ -475,7 +519,7 @@ class CodeBuddyStreamService:
                 tool_call_index_map = {}  # 用于跟踪工具调用ID到index的映射
                 
                 
-                async for chunk in response.aiter_text(chunk_size=8192):
+                async for chunk in response.aiter_text():
                     if not chunk:
                         continue
                     
@@ -497,6 +541,8 @@ class CodeBuddyStreamService:
                         # 解析SSE数据
                         chunk_data = parse_sse_line(line)
                         if chunk_data:
+                            if is_insufficient_credit_error(chunk_data):
+                                raise InsufficientCreditError(str(chunk_data.get("error", chunk_data)))
                             # 🔑 关键修改：使用OpenAI兼容性转换器
                             converted_chunk = OpenAICompatibilityConverter.convert_sse_chunk_to_openai_format(
                                 chunk_data, tool_call_index_map
@@ -513,6 +559,8 @@ class CodeBuddyStreamService:
                 if buffer.strip():
                     chunk_data = parse_sse_line(buffer.strip())
                     if chunk_data:
+                        if is_insufficient_credit_error(chunk_data):
+                            raise InsufficientCreditError(str(chunk_data.get("error", chunk_data)))
                         converted_chunk = OpenAICompatibilityConverter.convert_sse_chunk_to_openai_format(
                             chunk_data, tool_call_index_map
                         )
@@ -521,37 +569,102 @@ class CodeBuddyStreamService:
                     else:
                         yield buffer + '\n\n'
         
-        async def stream_with_retry():
-            async for chunk in self.connection_manager.stream_with_retry(stream_core):
-                yield chunk
+        async def stream_core():
+            active_headers = headers
+            active_index = credential_index
+            attempted = {active_index}
+            while True:
+                sent_output = False
+                pending = []
+                try:
+                    async for chunk in stream_attempt(active_headers):
+                        if not sent_output and not has_stream_output(chunk):
+                            pending.append(chunk)
+                            continue
+                        for prior in pending:
+                            yield prior
+                        pending.clear()
+                        sent_output = True
+                        yield chunk
+                    for prior in pending:
+                        yield prior
+                    return
+                except InsufficientCreditError as exc:
+                    if not retry_on_exhaustion or sent_output:
+                        if retry_on_exhaustion and sent_output and active_index is not None:
+                            codebuddy_token_manager.mark_credential_exhausted(active_index)
+                        yield format_sse_error(str(exc), "insufficient_credit")
+                        return
+                    credential = await next_credential_after_exhaustion(active_index)
+                    if not credential or credential["_credential_index"] in attempted:
+                        yield format_sse_error("所有可用凭证积分不足", "insufficient_credit")
+                        return
+                    active_index = credential["_credential_index"]
+                    attempted.add(active_index)
+                    active_headers = headers_for_credential(headers, credential)
+
+        async def stream_response():
+            try:
+                async for chunk in stream_core():
+                    yield chunk
+            except httpx.TransportError as exc:
+                # A dropped connection does not prove the upstream rejected the request.
+                # Replaying this POST can charge credits for the same conversation twice.
+                logger.error("CodeBuddy stream connection failed: %s", type(exc).__name__)
+                yield format_sse_error("CodeBuddy upstream connection failed", "connection_failed")
+            except Exception as exc:
+                logger.error("CodeBuddy stream failed: %s", exc)
+                yield format_sse_error("CodeBuddy stream failed", "stream_error")
+                raise
         
-        return StreamingResponse(stream_with_retry(), media_type="text/event-stream", headers=SSE_HEADERS)
+        return StreamingResponse(stream_response(), media_type="text/event-stream", headers=SSE_HEADERS)
     
     async def handle_non_stream_response(
         self,
         payload: Dict[str, Any],
         headers: Dict[str, str],
         credential_index: Optional[int] = None,
+        retry_on_exhaustion: bool = False,
     ) -> Dict[str, Any]:
         """处理非流式响应 - 使用修复后的聚合器，支持多工具调用"""
+        active_headers = headers
+        active_index = credential_index
+        attempted = {active_index}
+        while True:
+            try:
+                return await self._handle_non_stream_once(payload, active_headers)
+            except InsufficientCreditError as exc:
+                if not retry_on_exhaustion:
+                    raise HTTPException(status_code=402, detail="CodeBuddy 凭证积分不足")
+                if not exc.can_retry:
+                    if active_index is not None:
+                        codebuddy_token_manager.mark_credential_exhausted(active_index)
+                    raise HTTPException(status_code=402, detail="CodeBuddy 凭证积分不足，回复已开始生成")
+                credential = await next_credential_after_exhaustion(active_index)
+                if not credential or credential["_credential_index"] in attempted:
+                    raise HTTPException(status_code=402, detail="所有可用凭证积分不足")
+                active_index = credential["_credential_index"]
+                attempted.add(active_index)
+                active_headers = headers_for_credential(headers, credential)
+
+    async def _handle_non_stream_once(
+        self, payload: Dict[str, Any], headers: Dict[str, str]
+    ) -> Dict[str, Any]:
         try:
             client = await get_http_client()
-            try:
-                response = await client.post(get_codebuddy_api_url(), json=payload, headers=headers)
-            except (httpx.ConnectTimeout, httpx.ConnectError) as exc:
-                logger.warning("CodeBuddy upstream connection failed, retrying once: %s", type(exc).__name__)
-                await asyncio.sleep(0.5)
-                async with httpx.AsyncClient(**HTTP_CLIENT_CONFIG) as retry_client:
-                    response = await retry_client.post(
-                        get_codebuddy_api_url(), json=payload, headers=headers
-                    )
+            # Never replay a chat POST after a transport failure: it may have been billed.
+            self.attempt_count += 1
+            response = await client.post(get_codebuddy_api_url(), json=payload, headers=headers)
             
             if response.status_code != 200:
                 error_msg = response.text
+                if is_insufficient_credit_error(error_msg):
+                    raise InsufficientCreditError(error_msg)
                 self._handle_api_error(response.status_code, error_msg)
             
             aggregator = StreamResponseAggregator()
             buffer = ""
+            output_started = False
             
             async for chunk in response.aiter_text():
                 if not chunk:
@@ -561,11 +674,20 @@ class CodeBuddyStreamService:
                     line, buffer = buffer.split('\n', 1)
                     obj = parse_sse_line(line)
                     if obj:
+                        if is_insufficient_credit_error(obj):
+                            raise InsufficientCreditError(
+                                str(obj.get("error", obj)), can_retry=not output_started,
+                            )
+                        output_started = output_started or has_stream_output(line)
                         aggregator.process_chunk(obj)
             
             if buffer.strip():
                 obj = parse_sse_line(buffer.strip())
                 if obj:
+                    if is_insufficient_credit_error(obj):
+                        raise InsufficientCreditError(
+                            str(obj.get("error", obj)), can_retry=not output_started,
+                        )
                     aggregator.process_chunk(obj)
             
             return aggregator.finalize()
@@ -573,10 +695,12 @@ class CodeBuddyStreamService:
         except httpx.TimeoutException as exc:
             logger.error("CodeBuddy API 超时: %s", type(exc).__name__)
             raise HTTPException(status_code=504, detail="CodeBuddy API timeout")
-        except httpx.NetworkError as e:
+        except httpx.TransportError as e:
             logger.error(f"网络错误: {e}")
             raise HTTPException(status_code=502, detail=f"Network error: {str(e)}")
         except HTTPException:
+            raise
+        except InsufficientCreditError:
             raise
         except Exception as e:
             logger.error(f"请求异常: {e}")
@@ -636,6 +760,9 @@ class CredentialManager:
             else:
                 credential = codebuddy_token_manager.get_credential_by_index(credential_index)
             if not credential:
+                if (credential_index is None
+                        and codebuddy_token_manager.all_available_credentials_exhausted()):
+                    raise HTTPException(status_code=402, detail="所有可用凭证积分不足")
                 raise HTTPException(status_code=401, detail="没有可用的CodeBuddy凭证")
             
             bearer_token = credential.get('bearer_token')
@@ -766,18 +893,16 @@ def extract_stream_metrics(chunk: Any, metrics: Dict[str, Any]) -> None:
             metrics["usage"] = obj["usage"]
         if obj.get("error"):
             error_value = obj["error"]
-            error_type = error_value.get("type") if isinstance(error_value, dict) else None
-            if error_type == "connection_retry":
-                metrics["upstream_attempts"] += 1
-            else:
-                metrics["error"] = error_value.get("message") if isinstance(error_value, dict) else str(error_value)
+            metrics["error"] = error_value.get("message") if isinstance(error_value, dict) else str(error_value)
         for choice in obj.get("choices", []):
             delta = choice.get("delta") or {}
             if delta.get("content"):
                 metrics["output"].append(str(delta["content"]))
 
 
-def attach_stream_audit(response: StreamingResponse, audit: Dict[str, Any]) -> StreamingResponse:
+def attach_stream_audit(
+    response: StreamingResponse, audit: Dict[str, Any], service: CodeBuddyStreamService
+) -> StreamingResponse:
     original_iterator = response.body_iterator
 
     async def audited_iterator():
@@ -785,7 +910,6 @@ def attach_stream_audit(response: StreamingResponse, audit: Dict[str, Any]) -> S
             "usage": None,
             "output": [],
             "error": None,
-            "upstream_attempts": 1,
         }
         status_code = response.status_code or 200
         error = None
@@ -810,7 +934,7 @@ def attach_stream_audit(response: StreamingResponse, audit: Dict[str, Any]) -> S
                 status_code=status_code,
                 usage=metrics["usage"],
                 output_value="".join(metrics["output"]),
-                upstream_attempts=metrics["upstream_attempts"],
+                upstream_attempts=service.attempt_count,
                 error=error,
             )
 
@@ -996,23 +1120,34 @@ async def chat_completions(
         
         try:
             cred_idx = credential.get("_credential_index")
+            retry_on_exhaustion = credential_index is None and codebuddy_token_manager.mode == 'auto'
             if client_wants_stream:
-                response = await service.handle_stream_response(payload, headers, cred_idx)
-                return attach_stream_audit(response, audit)
+                response = await service.handle_stream_response(
+                    payload, headers, cred_idx, retry_on_exhaustion=retry_on_exhaustion,
+                )
+                return attach_stream_audit(response, audit, service)
 
-            response = await service.handle_non_stream_response(payload, headers, cred_idx)
+            response = await service.handle_non_stream_response(
+                payload, headers, cred_idx, retry_on_exhaustion=retry_on_exhaustion,
+            )
             finish_request_audit(
                 audit,
                 status_code=200,
                 usage=response.get("usage"),
                 output_value=get_chat_output_text(response),
+                upstream_attempts=service.attempt_count,
             )
             return response
         except HTTPException as exc:
-            finish_request_audit(audit, exc.status_code, error=str(exc.detail))
+            finish_request_audit(
+                audit, exc.status_code, upstream_attempts=service.attempt_count,
+                error=str(exc.detail),
+            )
             raise
         except Exception as exc:
-            finish_request_audit(audit, 500, error=str(exc))
+            finish_request_audit(
+                audit, 500, upstream_attempts=service.attempt_count, error=str(exc),
+            )
             raise
                 
     except HTTPException:
@@ -1064,12 +1199,20 @@ async def responses(
 
         service = CodeBuddyStreamService()
         try:
-            chat_response = await service.handle_non_stream_response(payload, headers, credential.get("_credential_index"))
+            chat_response = await service.handle_non_stream_response(
+                payload, headers, credential.get("_credential_index"),
+                retry_on_exhaustion=codebuddy_token_manager.mode == 'auto',
+            )
         except HTTPException as exc:
-            finish_request_audit(audit, exc.status_code, error=str(exc.detail))
+            finish_request_audit(
+                audit, exc.status_code, upstream_attempts=service.attempt_count,
+                error=str(exc.detail),
+            )
             raise
         except Exception as exc:
-            finish_request_audit(audit, 500, error=str(exc))
+            finish_request_audit(
+                audit, 500, upstream_attempts=service.attempt_count, error=str(exc),
+            )
             raise
 
         response_payload = chat_response_to_responses_response(chat_response, response_id)
@@ -1078,6 +1221,7 @@ async def responses(
             status_code=200,
             usage=chat_response.get("usage"),
             output_value=response_payload.get("output_text"),
+            upstream_attempts=service.attempt_count,
         )
 
         if not client_wants_stream:
@@ -1165,7 +1309,7 @@ async def list_credentials(_token: str = Depends(authenticate)):
 
 @router.post("/v1/credentials/set-mode", summary="Set credential mode (auto/manual)")
 async def set_credential_mode(request: Request, _token: str = Depends(authenticate)):
-    """设置凭证模式: auto=自动轮换, manual=锁定指定凭证(index 必填)"""
+    """设置凭证模式: auto=积分不足时自动切换, manual=锁定指定凭证(index 必填)"""
     try:
         data = await request.json()
         mode = data.get("mode")

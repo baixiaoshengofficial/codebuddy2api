@@ -26,8 +26,8 @@ class CodeBuddyTokenManager:
         self.state_file = os.path.join(self.creds_dir, 'manager_state.json')
         self.credentials = []
         self.current_index = 0  # Start from the first credential
-        self.usage_count = 0    # Counter for the current credential usage
-        self.mode = 'auto'  # 'auto' 自动轮换 | 'manual' 锁定指定凭证
+        self.usage_count = 0
+        self.mode = 'auto'  # 'auto' 积分不足时切换 | 'manual' 锁定指定凭证
         self.manual_selected_index = None  # manual 模式下锁定的凭证索引
         # 凭证 cooldown: {index: cooldown_until_timestamp}，额度耗尽后临时跳过
         self.cooldowns: Dict[int, float] = {}
@@ -37,6 +37,14 @@ class CodeBuddyTokenManager:
     
     def load_all_tokens(self):
         """加载所有token文件"""
+        current_filename = None
+        if 0 <= self.current_index < len(self.credentials):
+            current_filename = os.path.basename(self.credentials[self.current_index]['file_path'])
+        previous_cooldowns = {
+            os.path.basename(self.credentials[index]['file_path']): until
+            for index, until in self.cooldowns.items()
+            if 0 <= index < len(self.credentials)
+        }
         self.credentials = []
         self.current_index = -1
         
@@ -47,7 +55,7 @@ class CodeBuddyTokenManager:
             logger.warning(f"Credentials directory created at {self.creds_dir}. No credentials found.")
             return
         
-        token_files = glob.glob(os.path.join(self.creds_dir, '*.json'))
+        token_files = sorted(glob.glob(os.path.join(self.creds_dir, '*.json')))
         for file_path in token_files:
             try:
                 with open(file_path, 'r', encoding='utf-8') as f:
@@ -64,6 +72,13 @@ class CodeBuddyTokenManager:
                 logger.error(f"Failed to load credential file {os.path.basename(file_path)}: {e}")
         
         logger.info(f"Loaded a total of {len(self.credentials)} CodeBuddy credentials.")
+        self.cooldowns = {}
+        for index, credential in enumerate(self.credentials):
+            filename = os.path.basename(credential['file_path'])
+            if filename == current_filename:
+                self.current_index = index
+            if filename in previous_cooldowns:
+                self.cooldowns[index] = previous_cooldowns[filename]
     
     def load_state(self):
         """加载管理器状态，兼容旧版字段"""
@@ -102,6 +117,17 @@ class CodeBuddyTokenManager:
                     if 0 <= saved_current_index < len(self.credentials):
                         self.current_index = saved_current_index
 
+                saved_cooldowns = state.get('cooldowns', {})
+                if isinstance(saved_cooldowns, dict):
+                    for index, credential in enumerate(self.credentials):
+                        filename = os.path.basename(credential['file_path'])
+                        try:
+                            until = float(saved_cooldowns.get(filename, 0))
+                        except (TypeError, ValueError):
+                            continue
+                        if until > time.time():
+                            self.cooldowns[index] = until
+
                 logger.info(f"State loaded: mode={self.mode}, current_index={self.current_index}")
         except Exception as e:
             logger.warning(f"Failed to load manager state: {e}")
@@ -117,6 +143,11 @@ class CodeBuddyTokenManager:
                 'current_index': self.current_index,
                 'manual_selected_index': self.manual_selected_index,
                 'manual_selected_filename': None,
+                'cooldowns': {
+                    os.path.basename(self.credentials[index]['file_path']): until
+                    for index, until in self.cooldowns.items()
+                    if 0 <= index < len(self.credentials) and until > time.time()
+                },
                 'saved_at': int(time.time())
             }
 
@@ -175,17 +206,34 @@ class CodeBuddyTokenManager:
             self.cooldowns.pop(index, None)
         return False
 
+    def all_available_credentials_exhausted(self) -> bool:
+        usable_indices = [
+            index for index, credential in enumerate(self.credentials)
+            if self._can_use_credential(credential['data'])
+        ]
+        return bool(usable_indices) and all(
+            self._is_on_cooldown(index) for index in usable_indices
+        )
+
     def mark_credential_exhausted(self, index: int) -> None:
         """标记某凭证额度耗尽，cooldown 一段时间内不再选用"""
+        if not 0 <= index < len(self.credentials):
+            return
         self.cooldowns[index] = time.time() + self.cooldown_seconds
-        filename = "unknown"
-        if 0 <= index < len(self.credentials):
-            filename = os.path.basename(self.credentials[index]['file_path'])
+        filename = os.path.basename(self.credentials[index]['file_path'])
         logger.warning(f"Credential {filename} (index {index}) marked exhausted, cooldown {self.cooldown_seconds}s")
+        if self.mode == 'auto' and self.current_index == index:
+            for offset in range(1, len(self.credentials)):
+                next_index = (index + offset) % len(self.credentials)
+                if (self._can_use_credential(self.credentials[next_index]['data'])
+                        and not self._is_on_cooldown(next_index)):
+                    self.current_index = next_index
+                    self.usage_count = 0
+                    break
+        self.save_state()
 
     def get_next_credential(self) -> Optional[Dict]:
-        """获取下一个可用的凭证，根据模式与轮换策略，并检查过期/耗尽状态"""
-        from config import get_rotation_count
+        """保持当前凭证，只有失效或积分不足时才选择下一个。"""
 
         if not self.credentials:
             return None
@@ -222,38 +270,23 @@ class CodeBuddyTokenManager:
                     self.manual_selected_index = None
                     self.save_state()
 
-        # auto 模式：在未过期且未 cooldown 的凭证间轮换
+        # auto 模式：跳过已过期或积分不足的凭证
         # 过滤掉处于 cooldown 的凭证
         available = [(i, c) for i, c in valid_credentials if not self._is_on_cooldown(i)]
         if not available:
-            # 所有凭证都在 cooldown，清除 cooldown 重试一轮
-            logger.warning("All valid credentials on cooldown, clearing cooldowns and retrying")
-            self.cooldowns.clear()
-            available = valid_credentials
+            logger.warning("All usable credentials are on cooldown")
+            return None
 
         available_indices = [i for i, _ in available]
-        # 当前索引若不在可用列表，重置到第一个
+        # 当前索引不可用时，从当前位置向后寻找下一个
         if self.current_index not in available_indices:
-            self.current_index = available_indices[0]
+            self.current_index = next(
+                (i for i in available_indices if i > self.current_index),
+                available_indices[0],
+            )
             self.usage_count = 0
             self.save_state()
-            logger.info(f"Reset to first available credential index: {self.current_index}")
-
-        rotation_count = get_rotation_count()
-        try:
-            current_pos = available_indices.index(self.current_index)
-        except ValueError:
-            current_pos = 0
-            self.current_index = available_indices[0]
-            self.usage_count = 0
-
-        # 轮换：rotation_count > 0 时每 N 次请求切换
-        if rotation_count > 0 and self.usage_count >= rotation_count:
-            next_pos = (current_pos + 1) % len(available)
-            self.current_index = available_indices[next_pos]
-            self.usage_count = 0
-            self.save_state()
-            logger.info("Credential rotation triggered.")
+            logger.info(f"Selected next available credential index: {self.current_index}")
 
         credential = self.credentials[self.current_index]
         self.usage_count += 1
@@ -261,10 +294,7 @@ class CodeBuddyTokenManager:
         credential_filename = os.path.basename(credential['file_path'])
         usage_stats_manager.record_credential_usage(credential_filename)
 
-        logger.info(
-            f"Using credential: {credential_filename} "
-            f"(Usage: {self.usage_count}/{rotation_count})"
-        )
+        logger.info(f"Using credential: {credential_filename} (requests: {self.usage_count})")
         selected = dict(credential['data'])
         selected['_credential_filename'] = credential_filename
         selected['_credential_index'] = self.current_index
@@ -482,7 +512,7 @@ class CodeBuddyTokenManager:
             return False
 
     def set_mode(self, mode: str, index: Optional[int] = None) -> bool:
-        """设置凭证模式: 'auto' 自动轮换 | 'manual' 锁定指定凭证"""
+        """设置凭证模式: 'auto' 积分不足时切换 | 'manual' 锁定指定凭证"""
         if mode == 'manual':
             if index is None or not (0 <= index < len(self.credentials)):
                 logger.error(f"Invalid credential index for manual mode: {index}")
@@ -497,7 +527,7 @@ class CodeBuddyTokenManager:
         elif mode == 'auto':
             self.mode = 'auto'
             self.manual_selected_index = None
-            logger.info("Switched to auto rotation mode")
+            logger.info("Switched to automatic credit failover mode")
         else:
             logger.error(f"Invalid mode: {mode}")
             return False
@@ -506,12 +536,8 @@ class CodeBuddyTokenManager:
 
     def get_current_credential_info(self) -> Dict:
         """获取当前使用的凭证信息"""
-        from config import get_rotation_count
-
         if not self.credentials:
             return {"status": "no_credentials"}
-
-        rotation_count = get_rotation_count()
 
         # manual 模式
         if self.mode == 'manual' and self.manual_selected_index is not None and 0 <= self.manual_selected_index < len(self.credentials):
@@ -535,7 +561,6 @@ class CodeBuddyTokenManager:
             "filename": os.path.basename(credential['file_path']),
             "user_id": credential['data'].get('user_id', 'unknown'),
             "usage_count": self.usage_count,
-            "rotation_count": rotation_count
         }
 
 

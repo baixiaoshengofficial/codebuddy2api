@@ -42,7 +42,7 @@ const isManual = computed(() => current.value.mode === 'manual')
 const currentLabel = computed(() => {
   if (current.value.status === 'no_credentials') return '暂无可用凭证'
   if (current.value.mode === 'manual') return '手动模式 · 锁定凭证'
-  return '自动模式 · 自动轮换中'
+  return '自动模式 · 积分不足时切换'
 })
 
 const workbuddyRows = computed(() => {
@@ -405,7 +405,7 @@ onBeforeUnmount(() => {
           <span class="metric-icon"><KeyRound :size="18" /></span>
           <span>
             <strong>CodeBuddy 账号列表</strong>
-            <small>{{ credentials.length }} 个凭证 · 用于 API 请求与凭证轮换</small>
+            <small>{{ credentials.length }} 个凭证 · 积分不足时自动切换</small>
           </span>
         </div>
         <div class="checkin-actions">

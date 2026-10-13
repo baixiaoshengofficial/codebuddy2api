@@ -162,7 +162,7 @@ onBeforeUnmount(() => window.clearInterval(timer))
                   <span :title="item.response_preview">{{ item.response_preview }}</span>
                 </div>
               </div>
-              <small>ID {{ String(item.request_id || '').slice(0, 12) }} · Attempts {{ item.upstream_attempts || 1 }}</small>
+              <small>ID {{ String(item.request_id || '').slice(0, 12) }} · 上游请求 {{ item.upstream_attempts || 1 }} 次</small>
             </td>
           </tr>
         </tbody>
