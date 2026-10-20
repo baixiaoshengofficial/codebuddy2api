@@ -359,6 +359,8 @@ class RequestLogManager:
         estimated_output_tokens: Optional[int] = None,
         response_preview: Optional[str] = None,
         error: Optional[str] = None,
+        credential: Optional[str] = None,
+        credential_user_id: Optional[str] = None,
     ) -> None:
         usage = usage or {}
         input_tokens = usage.get("prompt_tokens", usage.get("input_tokens"))
@@ -383,7 +385,9 @@ class RequestLogManager:
                 UPDATE request_logs
                 SET completed_at = ?, status_code = ?, status = ?, latency_ms = ?,
                     upstream_attempts = ?, input_tokens = ?, output_tokens = ?, total_tokens = ?,
-                    token_estimated = ?, response_preview = ?, error = ?
+                    token_estimated = ?, response_preview = ?, error = ?,
+                    credential = COALESCE(?, credential),
+                    credential_user_id = CASE WHEN ? IS NULL THEN credential_user_id ELSE ? END
                 WHERE id = ?
                 """,
                 (
@@ -398,6 +402,9 @@ class RequestLogManager:
                     token_estimated,
                     response_preview,
                     safe_error,
+                    credential,
+                    credential,
+                    credential_user_id,
                     record_id,
                 ),
             )

@@ -479,8 +479,14 @@ class StreamResponseAggregator:
 class CodeBuddyStreamService:
     """CodeBuddy 流式服务类 - 职责分离，使用连接池优化"""
     
-    def __init__(self):
+    def __init__(self, credential: Optional[Dict[str, Any]] = None):
         self.attempt_count = 0
+        self._record_credential(credential or {})
+
+    def _record_credential(self, credential: Dict[str, Any]) -> None:
+        self.credential_for_audit = {
+            key: credential.get(key) for key in ("_credential_filename", "user_id")
+        }
     
     def _handle_api_error(self, status_code: int, error_msg: str) -> None:
         """统一的API错误处理 - 直接抛出异常"""
@@ -602,6 +608,7 @@ class CodeBuddyStreamService:
                     active_index = credential["_credential_index"]
                     attempted.add(active_index)
                     active_headers = headers_for_credential(headers, credential)
+                    self._record_credential(credential)
 
         async def stream_response():
             try:
@@ -646,6 +653,7 @@ class CodeBuddyStreamService:
                 active_index = credential["_credential_index"]
                 attempted.add(active_index)
                 active_headers = headers_for_credential(headers, credential)
+                self._record_credential(credential)
 
     async def _handle_non_stream_once(
         self, payload: Dict[str, Any], headers: Dict[str, str]
@@ -856,6 +864,7 @@ def finish_request_audit(
     output_value: Any = None,
     upstream_attempts: int = 1,
     error: Optional[str] = None,
+    credential: Optional[Dict[str, Any]] = None,
 ) -> None:
     if audit.get("record_id") is None:
         return
@@ -874,6 +883,8 @@ def finish_request_audit(
             estimated_output_tokens=estimated_output_tokens,
             response_preview=build_response_preview(output_value),
             error=error,
+            credential=(credential or {}).get("_credential_filename"),
+            credential_user_id=(credential or {}).get("user_id"),
         )
     except Exception as exc:
         logger.error(f"完成请求明细失败: {exc}")
@@ -936,6 +947,7 @@ def attach_stream_audit(
                 output_value="".join(metrics["output"]),
                 upstream_attempts=service.attempt_count,
                 error=error,
+                credential=service.credential_for_audit,
             )
 
     response.body_iterator = audited_iterator()
@@ -1115,7 +1127,7 @@ async def chat_completions(
         usage_stats_manager.record_model_usage(payload.get("model", "unknown"))
         
         # 使用服务类处理请求
-        service = CodeBuddyStreamService()
+        service = CodeBuddyStreamService(credential)
         client_wants_stream = request_body.get("stream", False)
         
         try:
@@ -1136,17 +1148,19 @@ async def chat_completions(
                 usage=response.get("usage"),
                 output_value=get_chat_output_text(response),
                 upstream_attempts=service.attempt_count,
+                credential=service.credential_for_audit,
             )
             return response
         except HTTPException as exc:
             finish_request_audit(
                 audit, exc.status_code, upstream_attempts=service.attempt_count,
-                error=str(exc.detail),
+                error=str(exc.detail), credential=service.credential_for_audit,
             )
             raise
         except Exception as exc:
             finish_request_audit(
                 audit, 500, upstream_attempts=service.attempt_count, error=str(exc),
+                credential=service.credential_for_audit,
             )
             raise
                 
@@ -1197,7 +1211,7 @@ async def responses(
         )
         usage_stats_manager.record_model_usage(payload.get("model", "unknown"))
 
-        service = CodeBuddyStreamService()
+        service = CodeBuddyStreamService(credential)
         try:
             chat_response = await service.handle_non_stream_response(
                 payload, headers, credential.get("_credential_index"),
@@ -1206,12 +1220,13 @@ async def responses(
         except HTTPException as exc:
             finish_request_audit(
                 audit, exc.status_code, upstream_attempts=service.attempt_count,
-                error=str(exc.detail),
+                error=str(exc.detail), credential=service.credential_for_audit,
             )
             raise
         except Exception as exc:
             finish_request_audit(
                 audit, 500, upstream_attempts=service.attempt_count, error=str(exc),
+                credential=service.credential_for_audit,
             )
             raise
 
@@ -1222,6 +1237,7 @@ async def responses(
             usage=chat_response.get("usage"),
             output_value=response_payload.get("output_text"),
             upstream_attempts=service.attempt_count,
+            credential=service.credential_for_audit,
         )
 
         if not client_wants_stream:

@@ -52,6 +52,8 @@ class RequestLogManagerTests(unittest.TestCase):
             self.assertEqual(item["request_preview"], "User: 123")
             self.assertEqual(item["response_preview"], "在的，你说。")
             self.assertEqual(item["status"], "success")
+            self.assertEqual(item["credential"], "account.json")
+            self.assertEqual(item["credential_user_id"], "user-1")
 
 
 if __name__ == "__main__":
