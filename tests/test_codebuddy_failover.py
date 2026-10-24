@@ -7,7 +7,8 @@ from unittest.mock import AsyncMock, patch
 import httpx
 from fastapi import HTTPException
 
-from src.codebuddy_router import CodeBuddyStreamService, is_insufficient_credit_error
+from src.codebuddy_router import create_chat_service
+from src.chat.protocol import is_insufficient_credit_error
 from src.codebuddy_token_manager import CodeBuddyTokenManager
 
 
@@ -48,7 +49,7 @@ class CreditResponseTests(unittest.IsolatedAsyncioTestCase):
 
         async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
             with patch("src.codebuddy_router.get_http_client", new=AsyncMock(return_value=client)):
-                service = CodeBuddyStreamService()
+                service = create_chat_service()
                 method = service.handle_stream_response if stream else service.handle_non_stream_response
                 result = await method(
                     {"model": "test", "messages": []},
@@ -127,7 +128,7 @@ class CreditResponseTests(unittest.IsolatedAsyncioTestCase):
 
         async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
             with patch("src.codebuddy_router.get_http_client", new=AsyncMock(return_value=client)):
-                service = CodeBuddyStreamService()
+                service = create_chat_service()
                 with self.assertRaises(HTTPException) as caught:
                     await service.handle_non_stream_response(
                         {"model": "test", "messages": []},
@@ -159,6 +160,14 @@ class CreditResponseTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(seen, ["Bearer token-0"])
         self.assertIn("partial", result)
         self.assertIn("insufficient_credit", result)
+
+    async def test_non_stream_non_credit_sse_error_is_not_success(self):
+        with self.assertRaises(HTTPException) as caught:
+            await self._request([
+                httpx.Response(200, text='data: {"error":{"message":"upstream failed"}}\n\n'),
+            ])
+        self.assertEqual(caught.exception.status_code, 502)
+        self.assertFalse(self.manager.cooldowns)
 
     def test_credit_detection_is_specific(self):
         self.assertTrue(is_insufficient_credit_error({"error": {"code": "insufficient_quota"}}))

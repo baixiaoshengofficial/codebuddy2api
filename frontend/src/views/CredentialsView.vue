@@ -1,524 +1,159 @@
 <script setup>
-import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
-import {
-  AlertCircle,
-  CalendarClock,
-  Check,
-  CircleCheck,
-  Clipboard,
-  ExternalLink,
-  Gift,
-  KeyRound,
-  LoaderCircle,
-  Pause,
-  Play,
-  RefreshCw,
-  ShieldCheck,
-  Trash2,
-} from '@lucide/vue'
-import { apiFetch, copyText, isOAuthPendingError } from '../lib/api'
-import { notify } from '../lib/notify'
-
-const loading = ref(true)
-const busy = ref(false)
-const credentials = ref([])
-const current = ref({ status: 'unknown', index: -1 })
-const models = ref([])
-const authUrl = ref('')
-const authState = ref('')
-const authPending = ref(false)
-const workbuddyCredentials = ref([])
-const workbuddyAuthUrl = ref('')
-const workbuddyAuthState = ref('')
-const workbuddyAuthPending = ref(false)
-const checkin = ref({ enabled: false, authorized: false, running: false, accounts: [], message: '' })
-const checkinBusy = ref(false)
-let pollTimer
-let workbuddyPollTimer
-let checkinPollTimer
-
-const isManual = computed(() => current.value.mode === 'manual')
-
-const currentLabel = computed(() => {
-  if (current.value.status === 'no_credentials') return '暂无可用凭证'
-  if (current.value.mode === 'manual') return '手动模式 · 锁定凭证'
-  return '自动模式 · 积分不足时切换'
-})
-
-const workbuddyRows = computed(() => {
-  const statusByFile = Object.fromEntries(
-    (checkin.value.accounts || []).map((item) => [item.filename, item]),
+import { computed, ref } from "vue";
+import { RefreshCw } from "@lucide/vue";
+import PageHeader from "../components/PageHeader.vue";
+import ResourceNotice from "../components/ResourceNotice.vue";
+import AuthorizationPanel from "../components/credentials/AuthorizationPanel.vue";
+import RoutingSummary from "../components/credentials/RoutingSummary.vue";
+import RoutingTimeline from "../components/credentials/RoutingTimeline.vue";
+import CredentialTable from "../components/credentials/CredentialTable.vue";
+import RequestDetails from "../components/requests/RequestDetails.vue";
+import CredentialTest from "../components/credentials/CredentialTest.vue";
+import WorkbuddyPanel from "../components/credentials/WorkbuddyPanel.vue";
+import { useResource } from "../composables/useResource";
+import { useAction } from "../composables/useAction";
+import { consoleApi } from "../services/console";
+import { credentialLabel } from "../lib/format";
+const tab = ref("codebuddy");
+const testing = ref(null);
+const selectedRequest = ref(null);
+const { data, loading, error, refresh } = useResource(
+  consoleApi.credentials,
+  {
+    credentials: [],
+    events: [],
+    mode: "auto",
+    available: 0,
+    cooldown_seconds: 300,
+  },
+  5000,
+);
+const { busy, run } = useAction();
+const search = ref(""),
+  state = ref("");
+const rows = computed(() =>
+  data.value.credentials.filter(
+    (row) =>
+      (!state.value || row.state === state.value) &&
+      `${credentialLabel(row)} ${row.filename}`
+        .toLowerCase()
+        .includes(search.value.toLowerCase()),
+  ),
+);
+function mode(value, filename) {
+  run(
+    async () => {
+      await consoleApi.setMode(value, filename);
+      await refresh();
+    },
+    value === "auto" ? "已恢复自动切换" : "已锁定凭证",
+  );
+}
+function remove(row) {
+  if (
+    !window.confirm(
+      `删除凭证 ${credentialLabel(row)}？此操作会删除服务器上的凭证文件。`,
+    )
   )
-  return workbuddyCredentials.value.map((credential, index) => {
-    const account = statusByFile[credential.filename] || {}
-    return {
-      index,
-      filename: credential.filename,
-      label: credential.phone || credential.email || credential.user_id || `WorkBuddy #${index + 1}`,
-      domain: credential.domain || '-',
-      expiry: formatExpiry(credential),
-      isExpired: !!credential.is_expired,
-      status: account.status || (credential.is_expired ? 'expired' : 'pending'),
-      message: account.message || (credential.is_expired ? '凭证已过期' : '等待检查'),
-      streakDays: account.streak_days || 0,
-      todayCredit: account.today_credit || account.daily_credit || 0,
-      checkedAt: account.checked_at,
-    }
-  })
-})
-
-const checkinCompleteCount = computed(() => workbuddyRows.value.filter(
-  (item) => ['claimed', 'already_checked_in'].includes(item.status),
-).length)
-
-function formatExpiry(credential) {
-  if (!credential.expires_at) return '长期有效'
-  return new Date(Number(credential.expires_at) * 1000).toLocaleDateString('zh-CN')
+    return;
+  run(async () => {
+    await consoleApi.deleteCredential(row.filename);
+    await refresh();
+  }, "凭证已删除");
 }
-
-function formatTime(timestamp) {
-  if (!timestamp) return '尚未执行'
-  return new Date(Number(timestamp) * 1000).toLocaleString('zh-CN', { hour12: false })
-}
-
-function checkinLabel(status) {
-  return {
-    claimed: '领取成功',
-    already_checked_in: '今日已签',
-    inactive: '活动未开放',
-    expired: '凭证已过期',
-    error: '检查失败',
-    pending: '等待检查',
-  }[status] || '状态未知'
-}
-
-function checkinClass(status) {
-  if (['claimed', 'already_checked_in'].includes(status)) return 'success'
-  if (['error', 'expired'].includes(status)) return 'error'
-  return 'pending'
-}
-
-async function load() {
-  loading.value = true
-  try {
-    const [credentialData, currentData] = await Promise.all([
-      apiFetch('/codebuddy/v1/credentials'),
-      apiFetch('/codebuddy/v1/credentials/current'),
-    ])
-    credentials.value = credentialData.credentials || []
-    current.value = currentData
-  } catch (error) {
-    notify(`凭证加载失败：${error.message}`, 'error')
-  } finally {
-    loading.value = false
-  }
-}
-
-async function loadModels() {
-  try {
-    const result = await apiFetch('/codebuddy/v1/models')
-    models.value = (result.data || []).map((item) => item.id)
-  } catch {
-    models.value = []
-  }
-}
-
-async function loadCheckin(silent = false) {
-  try {
-    checkin.value = await apiFetch('/api/checkin')
-  } catch (error) {
-    if (!silent) notify(`签到状态加载失败：${error.message}`, 'error')
-  }
-}
-
-async function loadWorkbuddy(silent = false) {
-  try {
-    const data = await apiFetch('/workbuddy/credentials')
-    workbuddyCredentials.value = data.credentials || []
-  } catch (error) {
-    if (!silent) notify(`WorkBuddy 凭证加载失败：${error.message}`, 'error')
-  }
-}
-
-async function runCheckin() {
-  checkinBusy.value = true
-  try {
-    checkin.value = await apiFetch('/api/checkin/run', { method: 'POST' })
-    const claimed = checkin.value.accounts.filter((item) => item.status === 'claimed').length
-    notify(claimed ? `签到完成，本次领取 ${claimed} 个账号` : '签到检查完成，没有待领取账号', claimed ? 'success' : 'info')
-  } catch (error) {
-    notify(`签到执行失败：${error.message}`, 'error')
-  } finally {
-    checkinBusy.value = false
-  }
-}
-
-async function deleteCredential(index) {
-  if (!window.confirm(`确定删除凭证 #${index + 1}？此操作不可恢复。`)) return
-  busy.value = true
-  try {
-    await apiFetch('/codebuddy/v1/credentials/delete', { method: 'POST', body: JSON.stringify({ index }) })
-    notify('凭证已删除', 'success')
-    await load()
-  } catch (error) {
-    notify(`删除失败：${error.message}`, 'error')
-  } finally {
-    busy.value = false
-  }
-}
-
-async function switchMode(mode, index = current.value.index) {
-  busy.value = true
-  try {
-    const body = { mode }
-    if (mode === 'manual') {
-      if (!Number.isInteger(index) || index < 0) throw new Error('没有可锁定的凭证')
-      body.index = index
-    }
-    await apiFetch('/codebuddy/v1/credentials/set-mode', { method: 'POST', body: JSON.stringify(body) })
-    notify(mode === 'manual' ? `已切换到手动模式` : '已切换到自动模式', 'success')
-    await load()
-  } catch (error) {
-    notify(`操作失败：${error.message}`, 'error')
-  } finally {
-    busy.value = false
-  }
-}
-
-async function selectCredential(index) {
-  busy.value = true
-  try {
-    await apiFetch('/codebuddy/v1/credentials/set-mode', { method: 'POST', body: JSON.stringify({ mode: 'manual', index }) })
-    notify(`已锁定凭证 #${index + 1}`, 'success')
-    await load()
-  } catch (error) {
-    notify(`切换失败：${error.message}`, 'error')
-  } finally {
-    busy.value = false
-  }
-}
-
-async function testCredential(index) {
-  busy.value = true
-  try {
-    if (!models.value.length) await loadModels()
-    if (!models.value.length) throw new Error('没有可用模型')
-    await apiFetch('/codebuddy/v1/chat/completions', {
-      method: 'POST',
-      body: JSON.stringify({
-        model: models.value[0],
-        messages: [{ role: 'user', content: 'test' }],
-        max_tokens: 1,
-        _credential_index: index,
-      }),
-    })
-    notify(`凭证 #${index + 1} 测试成功`, 'success')
-    await load()
-  } catch (error) {
-    notify(`凭证测试失败：${error.message}`, 'error')
-  } finally {
-    busy.value = false
-  }
-}
-
-async function startAuth() {
-  authPending.value = true
-  stopPolling()
-  try {
-    const result = await apiFetch('/codebuddy/auth/start')
-    authUrl.value = result.verification_uri_complete || ''
-    authState.value = result.auth_state || ''
-    if (!authUrl.value || !authState.value) throw new Error(result.message || '未返回认证链接')
-    pollToken()
-  } catch (error) {
-    authPending.value = false
-    notify(`认证启动失败：${error.message}`, 'error')
-  }
-}
-
-function pollToken() {
-  let inFlight = false
-  const poll = async () => {
-    if (inFlight || !authState.value) return
-    inFlight = true
-    try {
-      const result = await apiFetch('/codebuddy/auth/poll', {
-        method: 'POST',
-        body: JSON.stringify({ auth_state: authState.value }),
-      })
-      if (result.access_token) {
-        stopPolling()
-        authPending.value = false
-        authUrl.value = ''
-        notify('授权成功，凭证已保存', 'success')
-        await load()
-      }
-    } catch (error) {
-      if (isOAuthPendingError(error)) return
-      stopPolling()
-      authPending.value = false
-      notify(`授权失败：${error.message}`, 'error')
-    } finally {
-      inFlight = false
-    }
-  }
-  poll()
-  pollTimer = window.setInterval(poll, 3000)
-}
-
-function stopPolling() {
-  if (pollTimer) window.clearInterval(pollTimer)
-  pollTimer = null
-}
-
-function cancelAuth() {
-  stopPolling()
-  authPending.value = false
-  authUrl.value = ''
-  authState.value = ''
-  notify('已取消 CodeBuddy 授权等待', 'success')
-}
-
-async function startWorkbuddyAuth() {
-  workbuddyAuthPending.value = true
-  stopWorkbuddyPolling()
-  try {
-    const result = await apiFetch('/workbuddy/auth/start')
-    workbuddyAuthUrl.value = result.verification_uri_complete || ''
-    workbuddyAuthState.value = result.auth_state || ''
-    if (!workbuddyAuthUrl.value || !workbuddyAuthState.value) {
-      throw new Error(result.message || '未返回认证链接')
-    }
-    notify('已生成授权链接，请在下方打开并完成登录', 'success')
-    pollWorkbuddyToken()
-  } catch (error) {
-    workbuddyAuthPending.value = false
-    notify(`WorkBuddy 授权启动失败：${error.message}`, 'error')
-  }
-}
-
-function pollWorkbuddyToken() {
-  let inFlight = false
-  const poll = async () => {
-    if (inFlight || !workbuddyAuthState.value) return
-    inFlight = true
-    try {
-      const result = await apiFetch('/workbuddy/auth/poll', {
-        method: 'POST',
-        body: JSON.stringify({ auth_state: workbuddyAuthState.value }),
-      })
-      if (result.access_token || result.saved) {
-        stopWorkbuddyPolling()
-        workbuddyAuthPending.value = false
-        workbuddyAuthUrl.value = ''
-        workbuddyAuthState.value = ''
-        if (!result.saved) {
-          notify('授权拿到了 Token，但保存失败，请检查服务器 .workbuddy_creds 目录权限', 'error')
-          return
-        }
-        notify('WorkBuddy 授权成功', 'success')
-        await Promise.all([loadWorkbuddy(), loadCheckin()])
-      }
-    } catch (error) {
-      // Pending is expected until the browser login finishes — keep polling.
-      if (isOAuthPendingError(error)) return
-      stopWorkbuddyPolling()
-      workbuddyAuthPending.value = false
-      notify(`WorkBuddy 授权失败：${error.message}`, 'error')
-    } finally {
-      inFlight = false
-    }
-  }
-  poll()
-  workbuddyPollTimer = window.setInterval(poll, 2000)
-}
-
-function stopWorkbuddyPolling() {
-  if (workbuddyPollTimer) window.clearInterval(workbuddyPollTimer)
-  workbuddyPollTimer = null
-}
-
-function cancelWorkbuddyAuth() {
-  stopWorkbuddyPolling()
-  workbuddyAuthPending.value = false
-  workbuddyAuthUrl.value = ''
-  workbuddyAuthState.value = ''
-  notify('已取消 WorkBuddy 授权等待', 'success')
-}
-
-async function deleteWorkbuddyCredential(index) {
-  if (!window.confirm(`确定删除 WorkBuddy 账号 #${index + 1}？`)) return
-  busy.value = true
-  try {
-    await apiFetch('/workbuddy/credentials/delete', {
-      method: 'POST',
-      body: JSON.stringify({ index }),
-    })
-    notify('已删除 WorkBuddy 凭证', 'success')
-    await Promise.all([loadWorkbuddy(), loadCheckin()])
-  } catch (error) {
-    notify(`删除失败：${error.message}`, 'error')
-  } finally {
-    busy.value = false
-  }
-}
-
-async function copyAuthUrl() {
-  await copyText(authUrl.value)
-  notify('认证链接已复制', 'success')
-}
-
-async function copyWorkbuddyAuthUrl() {
-  await copyText(workbuddyAuthUrl.value)
-  notify('WorkBuddy 认证链接已复制', 'success')
-}
-
-onMounted(() => {
-  load()
-  loadModels()
-  loadWorkbuddy()
-  loadCheckin()
-  checkinPollTimer = window.setInterval(() => {
-    loadCheckin(true)
-    loadWorkbuddy(true)
-  }, 30000)
-})
-onBeforeUnmount(() => {
-  stopPolling()
-  stopWorkbuddyPolling()
-  if (checkinPollTimer) window.clearInterval(checkinPollTimer)
-})
 </script>
-
 <template>
   <section class="view-stack">
-    <div class="view-toolbar">
-      <div>
-        <p class="eyebrow">Credential pool</p>
-        <h2>凭证管理</h2>
+    <PageHeader
+      title="凭证管理"
+      eyebrow="CREDENTIALS"
+      description="管理账号授权，让每一次请求都有清晰的去向。"
+      ><template v-if="tab === 'codebuddy'"
+        ><button class="button secondary" :disabled="loading" @click="refresh">
+          <RefreshCw :size="16" :class="{ spin: loading }" />刷新</button
+        ><AuthorizationPanel product="codebuddy" @saved="refresh" /></template
+    ></PageHeader>
+    <div class="tabs" role="tablist" aria-label="凭证产品">
+      <button
+        id="codebuddy-tab"
+        :class="{ active: tab === 'codebuddy' }"
+        role="tab"
+        :aria-selected="tab === 'codebuddy'"
+        @click="tab = 'codebuddy'"
+      >
+        CodeBuddy <span>{{ data.credentials.length }}</span></button
+      ><button
+        id="workbuddy-tab"
+        :class="{ active: tab === 'workbuddy' }"
+        role="tab"
+        :aria-selected="tab === 'workbuddy'"
+        @click="tab = 'workbuddy'"
+      >
+        WorkBuddy 签到
+      </button>
+    </div>
+    <template v-if="tab === 'codebuddy'">
+      <ResourceNotice :error="error" @retry="refresh" />
+      <RoutingSummary :routing="data" :busy="busy" @mode="mode" />
+      <div class="credential-layout">
+        <section class="data-section credential-pool">
+          <header>
+            <div>
+              <h3>
+                凭证池 <span class="count">{{ data.credentials.length }}</span>
+              </h3>
+              <small>{{ data.available }} 个可用 · 每 5 秒自动更新</small>
+            </div>
+          </header>
+          <div class="table-toolbar">
+            <input
+              v-model="search"
+              type="search"
+              placeholder="搜索账号或凭证文件"
+              aria-label="搜索凭证"
+            /><select v-model="state" aria-label="凭证状态">
+              <option value="">全部状态</option>
+              <option value="available">可用</option>
+              <option value="refreshable">可自动续期</option>
+              <option value="cooldown">冷却中</option>
+              <option value="reauthorize">需要重新授权</option>
+              <option value="expired">已过期</option>
+            </select>
+          </div>
+          <div v-if="loading && !data.credentials.length" class="empty-state">
+            正在加载凭证…
+          </div>
+          <CredentialTable
+            v-else
+            :rows="rows"
+            :busy="busy"
+            :server-time="data.server_time"
+            @lock="mode('manual', $event.filename)"
+            @delete="remove"
+            @test="testing = $event"
+          />
+        </section>
+        <RoutingTimeline
+          :events="data.events"
+          @request="selectedRequest = $event"
+          :cooldown-seconds="data.cooldown_seconds"
+        />
       </div>
-    </div>
-
-    <section class="checkin-section codebuddy-section">
-      <header>
-        <div class="checkin-title">
-          <span class="metric-icon"><KeyRound :size="18" /></span>
-          <span>
-            <strong>CodeBuddy 账号列表</strong>
-            <small>{{ credentials.length }} 个凭证 · 积分不足时自动切换</small>
-          </span>
-        </div>
-        <div class="checkin-actions">
-          <button class="button secondary" :disabled="authPending" @click="startAuth">
-            <LoaderCircle v-if="authPending" class="spin" :size="16" /><ExternalLink v-else :size="16" />
-            {{ authPending ? '等待授权' : '授权 CodeBuddy' }}
-          </button>
-          <button class="icon-button" title="刷新凭证" @click="load"><RefreshCw :size="18" :class="{ spin: loading }" /></button>
-        </div>
-      </header>
-
-    <section class="status-strip" :class="current.status === 'no_credentials' ? 'warning' : 'success'">
-        <div>
-          <ShieldCheck :size="20" />
-          <span><strong>{{ currentLabel }}</strong><small v-if="current.filename">{{ current.filename }} · {{ current.user_id || '未知用户' }}</small></span>
-        </div>
-        <button class="button secondary" :disabled="busy || current.status === 'no_credentials'" @click="isManual ? switchMode('auto') : switchMode('manual', current.index)">
-          <Pause v-if="!isManual" :size="16" /><Play v-else :size="16" />
-          {{ isManual ? '切换自动' : '切换手动' }}
-        </button>
-    </section>
-
-    <div v-if="authUrl" class="auth-link-box" style="margin: 12px 14px 0;">
-      <input :value="authUrl" readonly />
-      <button class="icon-button compact" title="复制链接" @click="copyAuthUrl"><Clipboard :size="16" /></button>
-      <a class="icon-button compact" title="打开授权页面" :href="authUrl" target="_blank" rel="noopener"><ExternalLink :size="16" /></a>
-    </div>
-    <p v-if="authPending" class="muted" style="margin: 8px 14px 0; font-size: 13px;">
-      正在轮询授权结果…请在浏览器完成登录；成功后会自动保存并刷新账号列表。
-      <button type="button" class="linkish" style="margin-left: 8px;" @click="cancelAuth">取消等待</button>
-    </p>
-
-    <div class="credential-list">
-      <div v-if="loading && !credentials.length" class="empty-state"><LoaderCircle class="spin" :size="22" />加载中</div>
-      <div v-else-if="!credentials.length" class="empty-state"><KeyRound :size="24" />暂无凭证</div>
-      <article v-for="(credential, index) in credentials" :key="credential.filename || index" class="credential-row" :class="{ selected: current.index === index }">
-        <div class="credential-state" :class="credential.is_expired ? 'expired' : 'valid'">
-          <Check v-if="!credential.is_expired" :size="18" />
-          <KeyRound v-else :size="18" />
-        </div>
-        <div class="credential-primary">
-          <div><strong>{{ credential.email || credential.user_id || `凭证 #${index + 1}` }}</strong><span v-if="current.index === index" class="status-badge success">当前使用</span></div>
-          <small>{{ credential.filename }}</small>
-        </div>
-        <div class="credential-meta"><span>到期时间</span><strong>{{ formatExpiry(credential) }}</strong></div>
-        <div class="credential-meta"><span>剩余时间</span><strong>{{ credential.time_remaining_str || '未知' }}</strong></div>
-        <div class="row-actions">
-          <button v-if="isManual && current.index !== index" class="icon-button compact" title="使用此凭证" :disabled="busy" @click="selectCredential(index)"><Play :size="16" /></button>
-          <button class="icon-button compact" title="测试凭证" :disabled="busy" @click="testCredential(index)"><ShieldCheck :size="16" /></button>
-          <button class="icon-button compact danger" title="删除凭证" :disabled="busy" @click="deleteCredential(index)"><Trash2 :size="16" /></button>
-        </div>
-      </article>
-    </div>
-    </section>
-
-    <section class="checkin-section">
-        <header>
-          <div class="checkin-title">
-            <span class="metric-icon amber"><Gift :size="18" /></span>
-            <span>
-              <strong>WorkBuddy 账号列表</strong>
-              <small>
-                用于每日签到 · {{ checkin.enabled ? `自动签到已开启 · 每天 ${checkin.schedule_time || '11:00'}（北京时间）` : '自动签到已关闭' }}
-              </small>
-            </span>
-          </div>
-          <div class="checkin-actions">
-            <span>{{ checkinCompleteCount }} / {{ workbuddyRows.length }} 今日完成</span>
-            <button class="button secondary" :disabled="workbuddyAuthPending" @click="startWorkbuddyAuth">
-              <LoaderCircle v-if="workbuddyAuthPending" class="spin" :size="16" /><ExternalLink v-else :size="16" />
-              {{ workbuddyAuthPending ? '等待授权' : '授权 WorkBuddy' }}
-            </button>
-            <button class="button secondary" :disabled="checkinBusy || checkin.running || !workbuddyRows.length" @click="runCheckin">
-              <RefreshCw :size="16" :class="{ spin: checkinBusy || checkin.running }" />
-              {{ checkinBusy || checkin.running ? '检查中' : '立即检查' }}
-            </button>
-          </div>
-        </header>
-
-        <div v-if="workbuddyAuthUrl" class="auth-link-box" style="margin: 12px 14px 0;">
-          <input :value="workbuddyAuthUrl" readonly />
-          <button class="icon-button compact" title="复制链接" @click="copyWorkbuddyAuthUrl"><Clipboard :size="16" /></button>
-          <a class="icon-button compact" title="打开授权页面" :href="workbuddyAuthUrl" target="_blank" rel="noopener"><ExternalLink :size="16" /></a>
-        </div>
-        <p v-if="workbuddyAuthPending" class="muted" style="margin: 8px 14px 0; font-size: 13px;">
-          正在轮询授权结果…请在浏览器完成登录；成功后会自动保存并刷新账号列表。
-          <button type="button" class="linkish" style="margin-left: 8px;" @click="cancelWorkbuddyAuth">取消等待</button>
-        </p>
-
-        <div v-if="!workbuddyRows.length" class="empty-state">
-          <CalendarClock :size="21" />
-          {{ checkin.message || '请先授权 WorkBuddy，再执行自动签到' }}
-        </div>
-        <div v-else class="checkin-list">
-          <article v-for="row in workbuddyRows" :key="row.filename" class="checkin-row">
-            <CircleCheck v-if="['claimed', 'already_checked_in'].includes(row.status)" :size="20" class="checkin-success" />
-            <AlertCircle v-else-if="['error', 'expired'].includes(row.status)" :size="20" class="checkin-error" />
-            <KeyRound v-else-if="row.status === 'pending'" :size="20" class="checkin-pending" />
-            <CalendarClock v-else :size="20" class="checkin-pending" />
-            <div class="checkin-account">
-              <strong>{{ row.label }}</strong>
-              <small>{{ row.message }}</small>
-            </div>
-            <div class="checkin-meta"><span>域名</span><strong>{{ row.domain }}</strong></div>
-            <div class="checkin-meta"><span>连续签到</span><strong>{{ row.streakDays }} 天</strong></div>
-            <div class="checkin-meta"><span>今日奖励</span><strong>{{ row.todayCredit }} Credits</strong></div>
-            <div class="checkin-meta"><span>检查时间</span><strong>{{ formatTime(row.checkedAt) }}</strong></div>
-            <span class="status-badge" :class="checkinClass(row.status)">{{ checkinLabel(row.status) }}</span>
-            <div class="row-actions">
-              <button class="icon-button compact danger" title="删除" :disabled="busy" @click="deleteWorkbuddyCredential(row.index)"><Trash2 :size="16" /></button>
-            </div>
-          </article>
-        </div>
-    </section>
+    </template>
+    <WorkbuddyPanel v-else />
+    <RequestDetails
+      v-if="selectedRequest"
+      :id="selectedRequest"
+      :key="selectedRequest"
+      @close="selectedRequest = null"
+    />
+    <CredentialTest
+      v-if="testing"
+      :credential="testing"
+      @close="
+        testing = null;
+        refresh();
+      "
+    />
   </section>
 </template>

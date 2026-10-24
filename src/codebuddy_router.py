@@ -10,7 +10,7 @@ import asyncio
 import copy
 import hashlib
 import re
-from typing import Optional, Dict, Any, List, AsyncGenerator
+from typing import Optional, Dict, Any, List
 
 import httpx
 from fastapi import APIRouter, HTTPException, Depends, Request, Header
@@ -22,6 +22,11 @@ from .codebuddy_model_manager import codebuddy_model_manager
 from .codebuddy_token_manager import codebuddy_token_manager
 from .codebuddy_refresh import SessionExpiredError, codebuddy_credential_refresher
 from .usage_stats_manager import usage_stats_manager
+from .console.diagnostics import DiagnosticsRepository
+from .chat.observation import AttemptObserver
+from .chat.service import CodeBuddyStreamService
+from .chat.protocol import SSE_HEADERS, parse_sse_line
+
 from .request_log_manager import (
     build_request_preview,
     build_response_preview,
@@ -92,62 +97,6 @@ class AppLifecycleManager:
 # 导出生命周期管理器供主应用使用
 lifecycle_manager = AppLifecycleManager()
 
-# --- 标准响应头 ---
-SSE_HEADERS = {
-    "Cache-Control": "no-cache",
-    "Connection": "keep-alive",
-    "Access-Control-Allow-Origin": "*",
-    "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
-    "Access-Control-Allow-Headers": "*"
-}
-
-# --- 辅助函数 ---
-
-def format_sse_error(message: str, error_type: str = "stream_error") -> str:
-    """格式化SSE错误响应"""
-    error_data = {
-        "error": {
-            "message": message,
-            "type": error_type
-        }
-    }
-    return f'data: {json.dumps(error_data, ensure_ascii=False)}\n\n'
-
-
-class InsufficientCreditError(Exception):
-    """Upstream explicitly reported that this credential has no credits."""
-
-    def __init__(self, message: str, can_retry: bool = True):
-        super().__init__(message)
-        self.can_retry = can_retry
-
-
-def is_insufficient_credit_error(value: Any) -> bool:
-    """Recognize credit errors without treating ordinary rate limits as exhaustion."""
-    if isinstance(value, str):
-        try:
-            value = json.loads(value)
-        except (TypeError, ValueError):
-            pass
-    if isinstance(value, dict):
-        fields = ("code", "type", "message", "msg", "detail", "error_description")
-        parts = [str(value.get(key, "")) for key in fields]
-        error = value.get("error")
-        if isinstance(error, dict):
-            parts.extend(str(error.get(key, "")) for key in fields)
-        elif error is not None:
-            parts.append(str(error))
-        value = " ".join(parts)
-    message = str(value).lower()
-    return any(marker in message for marker in (
-        "积分不足", "积分已耗尽", "余额不足", "额度不足", "点数不足",
-        "insufficient_credit", "insufficient_quota", "insufficient balance",
-        "insufficient credits", "insufficient_balance", "not enough credit",
-        "credit balance is too low",
-        "credits exhausted",
-    ))
-
-
 async def next_credential_after_exhaustion(index: Optional[int]) -> Optional[Dict[str, Any]]:
     if index is None:
         return None
@@ -158,561 +107,34 @@ async def next_credential_after_exhaustion(index: Optional[int]) -> Optional[Dic
         return None
 
 
-def headers_for_credential(headers: Dict[str, str], credential: Dict[str, Any]) -> Dict[str, str]:
-    updated = dict(headers)
-    updated["Authorization"] = f"Bearer {credential['bearer_token']}"
-    updated["X-User-Id"] = credential.get("user_id") or updated.get("X-User-Id", "")
-    return updated
 
-
-def has_stream_output(chunk: str) -> bool:
-    """Keep metadata chunks buffered until retry is no longer safe."""
-    if "[DONE]" in chunk:
-        return True
-    event = parse_sse_line(chunk.strip())
-    if not event:
-        return False
-    if event.get("error"):
-        return True
-    return any(
-        choice.get("finish_reason") or any(
-            delta.get(key) for key in (
-                "content", "reasoning_content", "tool_calls", "function_call", "refusal",
-            )
-        )
-        for choice in event.get("choices", [])
-        for delta in [choice.get("delta") or {}]
+def create_chat_service(credential=None, observer=None):
+    """Composition boundary: bind upstream execution to application resources."""
+    return CodeBuddyStreamService(
+        client_factory=get_http_client, api_url_factory=get_codebuddy_api_url,
+        credentials=codebuddy_token_manager,
+        select_after_exhaustion=next_credential_after_exhaustion,
+        credential=credential, observer=observer,
     )
 
-class OpenAICompatibilityConverter:
-    """将CodeBuddy格式转换为OpenAI兼容格式"""
-    
-    @staticmethod
-    def convert_tool_call_id(codebuddy_id: str) -> str:
-        """转换工具调用ID格式: tooluse_xxx -> call_xxx"""
-        if codebuddy_id.startswith('tooluse_'):
-            return f"call_{codebuddy_id[8:]}"
-        return codebuddy_id
-    
-    @staticmethod
-    def convert_sse_chunk_to_openai_format(chunk_data: Dict[str, Any], tool_call_index_map: Dict[str, int]) -> Dict[str, Any]:
-        """将CodeBuddy SSE块转换为OpenAI格式"""
-        if not chunk_data.get('choices'):
-            return chunk_data
 
-        converted_chunk = chunk_data.copy()
-        converted_choices = []
+def resolve_credential_selector(body: Dict[str, Any]) -> Optional[int]:
+    """Resolve an explicit admin test target before forwarding the payload."""
+    index = body.pop("_credential_index", None)
+    filename = body.pop("_credential_filename", None)
+    if index is not None and filename is not None:
+        raise HTTPException(422, "Specify only one credential selector")
+    if filename is not None:
+        if not isinstance(filename, str):
+            raise HTTPException(422, "_credential_filename must be a string")
+        index = next((row['index'] for row in codebuddy_token_manager.get_credentials_info()
+                      if row['filename'] == filename), None)
+        if index is None:
+            raise HTTPException(409, "凭证列表已变更，请刷新后重试")
+    if index is not None and (isinstance(index, bool) or not isinstance(index, int)):
+        raise HTTPException(422, "_credential_index must be an integer")
+    return index
 
-        for choice in chunk_data.get('choices', []):
-            converted_choice = choice.copy()
-            delta = (choice.get('delta') or {}).copy()
-
-            function_call = delta.get('function_call')
-            if (
-                function_call is None
-                or (
-                    isinstance(function_call, dict)
-                    and not function_call.get('name')
-                    and not function_call.get('arguments')
-                )
-            ):
-                delta.pop('function_call', None)
-
-            if delta.get('tool_calls') == []:
-                delta.pop('tool_calls', None)
-            if delta.get('reasoning_content') in ("", None):
-                delta.pop('reasoning_content', None)
-            if delta.get('refusal') in ("", None):
-                delta.pop('refusal', None)
-            if delta.get('extra_fields') is None:
-                delta.pop('extra_fields', None)
-
-            if converted_choice.get('finish_reason') == "":
-                converted_choice['finish_reason'] = None
-            converted_choice['delta'] = delta
-            converted_choices.append(converted_choice)
-
-        converted_chunk['choices'] = converted_choices
-        
-        choice = converted_chunk['choices'][0]
-        delta = choice.get('delta', {})
-        tool_calls = delta.get('tool_calls', [])
-        
-        if not tool_calls:
-            return converted_chunk
-        
-        # 转换工具调用格式
-        converted_tool_calls = []
-        for tc in tool_calls:
-            converted_tc = tc.copy()
-            
-            # 转换ID格式
-            if tc.get('id'):
-                original_id = tc['id']
-                converted_id = OpenAICompatibilityConverter.convert_tool_call_id(original_id)
-                converted_tc['id'] = converted_id
-                
-                # 分配新的index
-                if original_id not in tool_call_index_map:
-                    tool_call_index_map[original_id] = len(tool_call_index_map)
-                
-                converted_tc['index'] = tool_call_index_map[original_id]
-            
-            # 如果没有ID，使用当前最新的index
-            elif tool_call_index_map:
-                # 使用最后一个工具调用的index
-                converted_tc['index'] = max(tool_call_index_map.values())
-            
-            converted_tool_calls.append(converted_tc)
-        
-        converted_chunk['choices'][0]['delta']['tool_calls'] = converted_tool_calls
-        
-        return converted_chunk
-
-def parse_sse_line(line: str) -> Optional[Dict[str, Any]]:
-    """解析单行SSE数据"""
-    if not line.startswith('data: '):
-        return None
-    
-    data = line[6:].strip()
-    if not data or data == '[DONE]':
-        return None
-    
-    try:
-        return json.loads(data)
-    except json.JSONDecodeError:
-        return None
-
-def validate_and_fix_tool_call_args(args: str) -> str:
-    """增强版的工具调用参数验证和修复 - 专门处理多工具调用问题"""
-    if not args:
-        return '{}'
-    
-    args = args.strip()
-    
-    # 检查是否是多个JSON对象连接的情况 - 这是多工具调用的主要问题
-    if args.count('}{') > 0:
-        # 尝试分离多个JSON对象
-        json_objects = []
-        current_obj = ""
-        brace_count = 0
-        
-        for i, char in enumerate(args):
-            current_obj += char
-            if char == '{':
-                brace_count += 1
-            elif char == '}':
-                brace_count -= 1
-                if brace_count == 0 and current_obj.strip():
-                    # 完成了一个JSON对象
-                    try:
-                        parsed = json.loads(current_obj.strip())
-                        json_objects.append(parsed)
-                        current_obj = ""
-                    except json.JSONDecodeError:
-                        current_obj = ""
-        
-        if json_objects:
-            return json.dumps(json_objects[0], ensure_ascii=False)
-    
-    # 原有的修复逻辑
-    try:
-        json.loads(args)
-        return args
-    except json.JSONDecodeError as e:
-        
-        
-        # 尝试修复常见的JSON问题
-        original_args = args
-        if not args.endswith('}') and args.count('{') > args.count('}'):
-            args += '}'
-            
-        elif not args.endswith(']') and args.count('[') > args.count(']'):
-            args += ']'
-            
-        
-        try:
-            json.loads(args)
-            
-            return args
-        except json.JSONDecodeError:
-            return '{}'
-
-class StreamResponseAggregator:
-    """流式响应聚合器 - 修复多工具调用问题：使用工具调用ID作为键"""
-    
-    def __init__(self):
-        self.data = {
-            "id": None,
-            "model": None,
-            "content": "",
-            "tool_calls": [],
-            "finish_reason": None,
-            "usage": None,
-            "system_fingerprint": None
-        }
-        # 🔑 关键：使用工具调用ID作为键，因为index都是0会覆盖
-        self.tool_call_map = {}  # key: tool_call_id, value: tool_call_data
-        self.tool_call_order = []  # 保持工具调用的接收顺序
-        self.current_tool_id = None  # 当前正在处理的工具调用ID
-    
-    def process_chunk(self, obj: Dict[str, Any]):
-        """处理单个响应块"""
-        # 聚合基本信息
-        self.data["id"] = self.data["id"] or obj.get('id')
-        self.data["model"] = self.data["model"] or obj.get('model')
-        self.data["system_fingerprint"] = obj.get('system_fingerprint') or self.data["system_fingerprint"]
-        
-        if obj.get('usage'):
-            self.data["usage"] = obj.get('usage')
-        
-        choices = obj.get('choices', [])
-        if not choices:
-            return
-        
-        choice = choices[0]
-        if choice.get('finish_reason'):
-            self.data["finish_reason"] = choice.get('finish_reason')
-        
-        delta = choice.get('delta', {})
-        
-        # 聚合内容
-        if delta.get('content'):
-            self.data["content"] += delta.get('content')
-        
-        # 处理工具调用
-        if delta.get('tool_calls'):
-            self._process_tool_calls(delta.get('tool_calls'))
-    
-    def _process_tool_calls(self, tool_calls: List[Dict[str, Any]]):
-        """处理工具调用 - 修复版：使用工具调用ID，正确处理分块传输"""
-        for tc in tool_calls:
-            tool_id = tc.get('id')
-            
-            # 如果有ID，这是一个新的工具调用
-            if tool_id:
-                # 新工具调用
-                if tool_id not in self.tool_call_map:
-                    self.tool_call_map[tool_id] = {
-                        'id': tool_id,
-                        'type': tc.get('type', 'function'),
-                        'function': {
-                            'name': '',
-                            'arguments': ''
-                        }
-                    }
-                    self.tool_call_order.append(tool_id)
-                    self.current_tool_id = tool_id
-                    logger.info(f"🔧 新工具调用: {tool_id}")
-                else:
-                    # 更新当前工具调用ID
-                    self.current_tool_id = tool_id
-                
-                # 更新工具调用信息
-                if tc.get('type'):
-                    self.tool_call_map[tool_id]['type'] = tc.get('type')
-                
-                func = tc.get('function', {})
-                if func.get('name'):
-                    self.tool_call_map[tool_id]['function']['name'] = func.get('name')
-                if func.get('arguments'):
-                    self.tool_call_map[tool_id]['function']['arguments'] += func.get('arguments')
-            
-            # 如果没有ID，但有当前工具调用ID，这是增量数据
-            elif self.current_tool_id and self.current_tool_id in self.tool_call_map:
-                func = tc.get('function', {})
-                if func.get('name'):
-                    self.tool_call_map[self.current_tool_id]['function']['name'] = func.get('name')
-                if func.get('arguments'):
-                    self.tool_call_map[self.current_tool_id]['function']['arguments'] += func.get('arguments')
-            
-            else:
-                # 没有ID且没有当前工具调用，跳过
-                logger.warning("⚠️ 工具调用缺少ID且无当前工具调用上下文，跳过处理")
-    
-    def finalize(self) -> Dict[str, Any]:
-        """完成聚合并返回最终响应"""
-        # 按接收顺序构建工具调用列表
-        if self.tool_call_map:
-            self.data["tool_calls"] = []
-            for tool_id in self.tool_call_order:
-                if tool_id in self.tool_call_map:
-                    tc = self.tool_call_map[tool_id]
-                    # 验证和修复工具调用参数
-                    tc['function']['arguments'] = validate_and_fix_tool_call_args(
-                        tc['function']['arguments']
-                    )
-                    self.data["tool_calls"].append(tc)
-                    logger.info(f"📋 工具调用: {tool_id} - {tc['function']['name']}")
-            
-            logger.info(f"✅ 成功聚合 {len(self.data['tool_calls'])} 个工具调用")
-        
-        # 构建最终响应
-        final_message = {"role": "assistant", "content": self.data["content"]}
-        if self.data["tool_calls"]:
-            final_message["tool_calls"] = self.data["tool_calls"]
-        
-        finish_reason = "tool_calls" if self.data["tool_calls"] else (self.data["finish_reason"] or "stop")
-        
-        final_response = {
-            "id": self.data["id"] or str(uuid.uuid4()),
-            "object": "chat.completion",
-            "created": int(time.time()),
-            "model": self.data["model"] or "unknown",
-            "choices": [
-                {
-                    "index": 0,
-                    "message": final_message,
-                    "finish_reason": finish_reason,
-                    "logprobs": None
-                }
-            ]
-        }
-        
-        if self.data["usage"]:
-            final_response["usage"] = self.data["usage"]
-        if self.data["system_fingerprint"]:
-            final_response["system_fingerprint"] = self.data["system_fingerprint"]
-        
-        return final_response
-
-class CodeBuddyStreamService:
-    """CodeBuddy 流式服务类 - 职责分离，使用连接池优化"""
-    
-    def __init__(self, credential: Optional[Dict[str, Any]] = None):
-        self.attempt_count = 0
-        self._record_credential(credential or {})
-
-    def _record_credential(self, credential: Dict[str, Any]) -> None:
-        self.credential_for_audit = {
-            key: credential.get(key) for key in ("_credential_filename", "user_id")
-        }
-    
-    def _handle_api_error(self, status_code: int, error_msg: str) -> None:
-        """统一的API错误处理 - 直接抛出异常"""
-        logger.error(f"CodeBuddy API错误: {status_code} - {error_msg}")
-        
-        if status_code == 401:
-            raise HTTPException(status_code=401, detail="CodeBuddy API authentication failed")
-        elif status_code == 429:
-            raise HTTPException(status_code=429, detail="CodeBuddy API rate limit exceeded")
-        elif status_code >= 500:
-            raise HTTPException(status_code=502, detail="CodeBuddy API server error")
-        else:
-            raise HTTPException(status_code=status_code, detail=f"CodeBuddy API error: {error_msg}")
-    
-    async def handle_stream_response(
-        self,
-        payload: Dict[str, Any],
-        headers: Dict[str, str],
-        credential_index: Optional[int] = None,
-        retry_on_exhaustion: bool = False,
-    ) -> StreamingResponse:
-        """处理流式响应 - 使用OpenAI兼容性转换器修复格式问题"""
-        async def stream_attempt(attempt_headers: Dict[str, str]):
-            client = await get_http_client()
-            self.attempt_count += 1
-            async with client.stream("POST", get_codebuddy_api_url(), json=payload, headers=attempt_headers) as response:
-                if response.status_code != 200:
-                    error_text = await response.aread()
-                    error_msg = error_text.decode('utf-8', errors='ignore')
-                    if is_insufficient_credit_error(error_msg):
-                        raise InsufficientCreditError(error_msg)
-                    yield format_sse_error(f"CodeBuddy API error: {response.status_code} - {error_msg}", "api_error")
-                    return
-                
-                buffer = ""
-                tool_call_index_map = {}  # 用于跟踪工具调用ID到index的映射
-                
-                
-                async for chunk in response.aiter_text():
-                    if not chunk:
-                        continue
-                    
-                    buffer += chunk
-                    
-                    # 处理完整的SSE行
-                    while '\n' in buffer:
-                        line, buffer = buffer.split('\n', 1)
-                        
-                        # 跳过空行和注释行
-                        if not line.strip() or line.startswith(':'):
-                            continue
-                        
-                        # 检查是否结束
-                        if '[DONE]' in line:
-                            yield 'data: [DONE]\n\n'
-                            return
-                        
-                        # 解析SSE数据
-                        chunk_data = parse_sse_line(line)
-                        if chunk_data:
-                            if is_insufficient_credit_error(chunk_data):
-                                raise InsufficientCreditError(str(chunk_data.get("error", chunk_data)))
-                            # 🔑 关键修改：使用OpenAI兼容性转换器
-                            converted_chunk = OpenAICompatibilityConverter.convert_sse_chunk_to_openai_format(
-                                chunk_data, tool_call_index_map
-                            )
-                            
-                            # 重新格式化为SSE格式并发送
-                            converted_line = f"data: {json.dumps(converted_chunk, ensure_ascii=False)}"
-                            yield converted_line + '\n\n'
-                        else:
-                            # 非数据行直接转发
-                            yield line + '\n\n'
-                
-                # 处理缓冲区中剩余的数据
-                if buffer.strip():
-                    chunk_data = parse_sse_line(buffer.strip())
-                    if chunk_data:
-                        if is_insufficient_credit_error(chunk_data):
-                            raise InsufficientCreditError(str(chunk_data.get("error", chunk_data)))
-                        converted_chunk = OpenAICompatibilityConverter.convert_sse_chunk_to_openai_format(
-                            chunk_data, tool_call_index_map
-                        )
-                        converted_line = f"data: {json.dumps(converted_chunk, ensure_ascii=False)}"
-                        yield converted_line + '\n\n'
-                    else:
-                        yield buffer + '\n\n'
-        
-        async def stream_core():
-            active_headers = headers
-            active_index = credential_index
-            attempted = {active_index}
-            while True:
-                sent_output = False
-                pending = []
-                try:
-                    async for chunk in stream_attempt(active_headers):
-                        if not sent_output and not has_stream_output(chunk):
-                            pending.append(chunk)
-                            continue
-                        for prior in pending:
-                            yield prior
-                        pending.clear()
-                        sent_output = True
-                        yield chunk
-                    for prior in pending:
-                        yield prior
-                    return
-                except InsufficientCreditError as exc:
-                    if not retry_on_exhaustion or sent_output:
-                        if retry_on_exhaustion and sent_output and active_index is not None:
-                            codebuddy_token_manager.mark_credential_exhausted(active_index)
-                        yield format_sse_error(str(exc), "insufficient_credit")
-                        return
-                    credential = await next_credential_after_exhaustion(active_index)
-                    if not credential or credential["_credential_index"] in attempted:
-                        yield format_sse_error("所有可用凭证积分不足", "insufficient_credit")
-                        return
-                    active_index = credential["_credential_index"]
-                    attempted.add(active_index)
-                    active_headers = headers_for_credential(headers, credential)
-                    self._record_credential(credential)
-
-        async def stream_response():
-            try:
-                async for chunk in stream_core():
-                    yield chunk
-            except httpx.TransportError as exc:
-                # A dropped connection does not prove the upstream rejected the request.
-                # Replaying this POST can charge credits for the same conversation twice.
-                logger.error("CodeBuddy stream connection failed: %s", type(exc).__name__)
-                yield format_sse_error("CodeBuddy upstream connection failed", "connection_failed")
-            except Exception as exc:
-                logger.error("CodeBuddy stream failed: %s", exc)
-                yield format_sse_error("CodeBuddy stream failed", "stream_error")
-                raise
-        
-        return StreamingResponse(stream_response(), media_type="text/event-stream", headers=SSE_HEADERS)
-    
-    async def handle_non_stream_response(
-        self,
-        payload: Dict[str, Any],
-        headers: Dict[str, str],
-        credential_index: Optional[int] = None,
-        retry_on_exhaustion: bool = False,
-    ) -> Dict[str, Any]:
-        """处理非流式响应 - 使用修复后的聚合器，支持多工具调用"""
-        active_headers = headers
-        active_index = credential_index
-        attempted = {active_index}
-        while True:
-            try:
-                return await self._handle_non_stream_once(payload, active_headers)
-            except InsufficientCreditError as exc:
-                if not retry_on_exhaustion:
-                    raise HTTPException(status_code=402, detail="CodeBuddy 凭证积分不足")
-                if not exc.can_retry:
-                    if active_index is not None:
-                        codebuddy_token_manager.mark_credential_exhausted(active_index)
-                    raise HTTPException(status_code=402, detail="CodeBuddy 凭证积分不足，回复已开始生成")
-                credential = await next_credential_after_exhaustion(active_index)
-                if not credential or credential["_credential_index"] in attempted:
-                    raise HTTPException(status_code=402, detail="所有可用凭证积分不足")
-                active_index = credential["_credential_index"]
-                attempted.add(active_index)
-                active_headers = headers_for_credential(headers, credential)
-                self._record_credential(credential)
-
-    async def _handle_non_stream_once(
-        self, payload: Dict[str, Any], headers: Dict[str, str]
-    ) -> Dict[str, Any]:
-        try:
-            client = await get_http_client()
-            # Never replay a chat POST after a transport failure: it may have been billed.
-            self.attempt_count += 1
-            response = await client.post(get_codebuddy_api_url(), json=payload, headers=headers)
-            
-            if response.status_code != 200:
-                error_msg = response.text
-                if is_insufficient_credit_error(error_msg):
-                    raise InsufficientCreditError(error_msg)
-                self._handle_api_error(response.status_code, error_msg)
-            
-            aggregator = StreamResponseAggregator()
-            buffer = ""
-            output_started = False
-            
-            async for chunk in response.aiter_text():
-                if not chunk:
-                    continue
-                buffer += chunk
-                while '\n' in buffer:
-                    line, buffer = buffer.split('\n', 1)
-                    obj = parse_sse_line(line)
-                    if obj:
-                        if is_insufficient_credit_error(obj):
-                            raise InsufficientCreditError(
-                                str(obj.get("error", obj)), can_retry=not output_started,
-                            )
-                        output_started = output_started or has_stream_output(line)
-                        aggregator.process_chunk(obj)
-            
-            if buffer.strip():
-                obj = parse_sse_line(buffer.strip())
-                if obj:
-                    if is_insufficient_credit_error(obj):
-                        raise InsufficientCreditError(
-                            str(obj.get("error", obj)), can_retry=not output_started,
-                        )
-                    aggregator.process_chunk(obj)
-            
-            return aggregator.finalize()
-            
-        except httpx.TimeoutException as exc:
-            logger.error("CodeBuddy API 超时: %s", type(exc).__name__)
-            raise HTTPException(status_code=504, detail="CodeBuddy API timeout")
-        except httpx.TransportError as e:
-            logger.error(f"网络错误: {e}")
-            raise HTTPException(status_code=502, detail=f"Network error: {str(e)}")
-        except HTTPException:
-            raise
-        except InsufficientCreditError:
-            raise
-        except Exception as e:
-            logger.error(f"请求异常: {e}")
-            raise HTTPException(status_code=500, detail=f"Request error: {str(e)}")
 
 class RequestProcessor:
     """请求预处理器 - 线程安全的请求处理"""
@@ -897,6 +319,8 @@ def extract_stream_metrics(chunk: Any, metrics: Dict[str, Any]) -> None:
     else:
         text = str(chunk)
     for line in text.splitlines():
+        if line.strip() == "data: [DONE]":
+            metrics["complete"] = True
         obj = parse_sse_line(line)
         if not obj:
             continue
@@ -921,6 +345,7 @@ def attach_stream_audit(
             "usage": None,
             "output": [],
             "error": None,
+            "complete": False,
         }
         status_code = response.status_code or 200
         error = None
@@ -929,8 +354,9 @@ def attach_stream_audit(
                 extract_stream_metrics(chunk, metrics)
                 yield chunk
         except asyncio.CancelledError:
-            status_code = 499
-            error = "Client disconnected"
+            if not metrics["complete"]:
+                status_code = 499
+                error = "Client disconnected"
             raise
         except Exception as exc:
             status_code = 500
@@ -1096,12 +522,8 @@ async def chat_completions(
         # The management UI can test one credential without changing the
         # currently selected credential or the rotation mode.  This field is
         # intentionally removed before forwarding the request upstream.
-        credential_index = request_body.pop("_credential_index", None)
-        if credential_index is not None and (
-            isinstance(credential_index, bool) or not isinstance(credential_index, int)
-        ):
-            raise HTTPException(status_code=422, detail="_credential_index must be an integer")
-        
+        credential_index = resolve_credential_selector(request_body)
+
         # 获取有效凭证
         credential = await get_ready_credential(credential_index)
         
@@ -1127,7 +549,9 @@ async def chat_completions(
         usage_stats_manager.record_model_usage(payload.get("model", "unknown"))
         
         # 使用服务类处理请求
-        service = CodeBuddyStreamService(credential)
+        service = create_chat_service(credential, AttemptObserver(
+            DiagnosticsRepository(request_log_manager.connect), audit.get("record_id")
+        ))
         client_wants_stream = request_body.get("stream", False)
         
         try:
@@ -1189,10 +613,11 @@ async def responses(
 
         response_id = f"resp_{uuid.uuid4().hex}"
         client_wants_stream = request_body.get("stream", False)
+        credential_index = resolve_credential_selector(request_body)
         chat_request = responses_request_to_chat_request(request_body)
         RequestProcessor.validate_request(chat_request)
 
-        credential = await get_ready_credential()
+        credential = await get_ready_credential(credential_index)
         payload = RequestProcessor.prepare_payload(chat_request)
         audit = start_request_audit(
             request,
@@ -1211,11 +636,13 @@ async def responses(
         )
         usage_stats_manager.record_model_usage(payload.get("model", "unknown"))
 
-        service = CodeBuddyStreamService(credential)
+        service = create_chat_service(credential, AttemptObserver(
+            DiagnosticsRepository(request_log_manager.connect), audit.get("record_id")
+        ))
         try:
             chat_response = await service.handle_non_stream_response(
                 payload, headers, credential.get("_credential_index"),
-                retry_on_exhaustion=codebuddy_token_manager.mode == 'auto',
+                retry_on_exhaustion=credential_index is None and codebuddy_token_manager.mode == 'auto',
             )
         except HTTPException as exc:
             finish_request_audit(

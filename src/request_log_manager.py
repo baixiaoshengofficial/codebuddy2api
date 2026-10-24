@@ -1,5 +1,6 @@
 """Persistent request-level audit log for model API calls."""
 import csv
+from contextlib import contextmanager
 import io
 import json
 import os
@@ -32,6 +33,10 @@ def _compact_text(value: Any) -> str:
 
 def _redact_secrets(text: str) -> str:
     patterns = (
+        (
+            r'(?i)("(?:api[_-]?key|(?:access_|refresh_|bearer_)?token|password|authorization)"\s*:\s*)"[^"\n]*"',
+            r'\1"[REDACTED]"',
+        ),
         (r"(?i)(bearer\s+)[a-z0-9._~+/-]+", r"\1[REDACTED]"),
         (r"(?i)((?:api[_-]?key|token|password)\s*[:=]\s*)[^\s,;]+", r"\1[REDACTED]"),
         (r"sk-[a-zA-Z0-9_-]{16,}", "sk-[REDACTED]"),
@@ -215,11 +220,16 @@ class RequestLogManager:
         if initialize:
             self._ensure_initialized()
 
-    def _open_connection(self) -> sqlite3.Connection:
+    @contextmanager
+    def _open_connection(self):
         connection = sqlite3.connect(self.db_path, timeout=10)
         connection.row_factory = sqlite3.Row
         connection.execute("PRAGMA busy_timeout = 10000")
-        return connection
+        try:
+            with connection:
+                yield connection
+        finally:
+            connection.close()
 
     def _ensure_initialized(self) -> None:
         """Create or migrate storage on first use, not while modules are imported."""
@@ -294,7 +304,8 @@ class RequestLogManager:
                     )
                 self._initialized = True
 
-    def _connect(self) -> sqlite3.Connection:
+    def connect(self):
+        """Provide a transaction that always closes its connection."""
         self._ensure_initialized()
         return self._open_connection()
 
@@ -314,7 +325,7 @@ class RequestLogManager:
         is_streaming: bool,
     ) -> int:
         now = int(time.time() * 1000)
-        with self._lock, self._connect() as connection:
+        with self._lock, self.connect() as connection:
             cursor = connection.execute(
                 """
                 INSERT INTO request_logs (
@@ -379,7 +390,7 @@ class RequestLogManager:
         completed_at = int(time.time() * 1000)
         status = "success" if 200 <= status_code < 400 and not error else "error"
         safe_error = _redact_secrets(_compact_text(error))[:500] if error else None
-        with self._lock, self._connect() as connection:
+        with self._lock, self.connect() as connection:
             connection.execute(
                 """
                 UPDATE request_logs
@@ -418,29 +429,19 @@ class RequestLogManager:
         client: Optional[str] = None,
         credential: Optional[str] = None,
         status: Optional[str] = None,
+        query=None,
     ) -> Dict[str, Any]:
         page = max(1, page)
         page_size = min(100, max(1, page_size))
-        clauses: List[str] = []
-        params: List[Any] = []
-        if days and days > 0:
-            clauses.append("created_at >= ?")
-            params.append(int((time.time() - days * 86400) * 1000))
-        if model:
-            clauses.append("model = ?")
-            params.append(model)
-        if client:
-            clauses.append("client = ?")
-            params.append(client)
-        if credential:
-            clauses.append("credential = ?")
-            params.append(credential)
-        if status:
-            clauses.append("status = ?")
-            params.append(status)
-        where_sql = f" WHERE {' AND '.join(clauses)}" if clauses else ""
+        from .request_query import RequestFilter
+        if query is None:
+            query = RequestFilter(
+                start=int((time.time() - days * 86400) * 1000) if days else None,
+                model=model, client=client, credential=credential, status=status,
+            )
+        where_sql, params = query.sql()
 
-        with self._lock, self._connect() as connection:
+        with self._lock, self.connect() as connection:
             total = connection.execute(
                 f"SELECT COUNT(*) FROM request_logs{where_sql}", params
             ).fetchone()[0]
@@ -473,7 +474,7 @@ class RequestLogManager:
         }
 
     def get_aggregate_stats(self) -> Dict[str, Dict[str, int]]:
-        with self._lock, self._connect() as connection:
+        with self._lock, self.connect() as connection:
             model_rows = connection.execute(
                 "SELECT model, COUNT(*) FROM request_logs GROUP BY model"
             ).fetchall()
@@ -497,26 +498,17 @@ class RequestLogManager:
         client: Optional[str] = None,
         credential: Optional[str] = None,
         status: Optional[str] = None,
+        query=None,
     ) -> Tuple[str, str]:
-        clauses: List[str] = []
-        params: List[Any] = []
-        if days and days > 0:
-            clauses.append("created_at >= ?")
-            params.append(int((time.time() - days * 86400) * 1000))
-        if model:
-            clauses.append("model = ?")
-            params.append(model)
-        if client:
-            clauses.append("client = ?")
-            params.append(client)
-        if credential:
-            clauses.append("credential = ?")
-            params.append(credential)
-        if status:
-            clauses.append("status = ?")
-            params.append(status)
-        where_sql = f" WHERE {' AND '.join(clauses)}" if clauses else ""
-        with self._lock, self._connect() as connection:
+        from .request_query import RequestFilter
+        if query is None:
+            query = RequestFilter(
+                start=int((time.time() - days * 86400) * 1000) if days else None,
+                model=model, client=client, credential=credential, status=status,
+            )
+        where_sql, params = query.sql()
+
+        with self._lock, self.connect() as connection:
             rows = connection.execute(
                 f"SELECT * FROM request_logs{where_sql} ORDER BY created_at DESC LIMIT ?",
                 params + [MAX_RECORDS],

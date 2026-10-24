@@ -8,6 +8,7 @@ from pydantic import BaseModel
 from typing import Dict, Any
 
 from .auth import authenticate
+from .console.settings import validate_settings
 from config import get_active_config, update_settings
 from .usage_stats_manager import usage_stats_manager
 from .request_log_manager import request_log_manager
@@ -63,8 +64,11 @@ async def save_settings(new_settings: Settings, _token: str = Depends(authentica
             for key, value in new_settings.settings.items()
             if key not in READONLY_SETTING_KEYS
         }
+        settings = validate_settings(settings)
         update_settings(settings)
         return {"message": "设置已保存并成功热加载！"}
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc))
     except Exception as e:
         logger.error(f"Error saving settings: {e}")
         raise HTTPException(status_code=500, detail="无法保存设置文件。")

@@ -14,6 +14,7 @@ from src.codebuddy_auth_router import router as codebuddy_auth_router
 from src.workbuddy_auth_router import router as workbuddy_auth_router
 from src.settings_router import router as settings_router
 from src.frontend_router import router as frontend_router
+from src.console.router import router as console_router
 from src.checkin_manager import checkin_manager
 from src.codebuddy_refresh import codebuddy_credential_refresher
 
@@ -95,6 +96,8 @@ app.include_router(
     prefix="/api",
     tags=["Settings Management"]
 )
+
+app.include_router(console_router, tags=["Console"])
 
 # 健康检查端点
 @app.get("/health")

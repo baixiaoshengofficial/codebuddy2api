@@ -1,0 +1,47 @@
+:root {
+  font-family:
+    -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC",
+    "Microsoft YaHei", sans-serif;
+  font-synthesis: none;
+  --bg: #f8f9f6;
+  --surface: #fff;
+  --sidebar: #f3f5ef;
+  --surface-subtle: #f9faf7;
+  --surface-active: #edf4e8;
+  --text: #28312a;
+  --muted: #778172;
+  --border: #e5e9e1;
+  --border-strong: #d5dece;
+  --primary: #294b35;
+  --primary-hover: #3a6246;
+  --on-primary: #fff;
+  --green: #376648;
+  --green-soft: #edf5e8;
+  --amber: #976914;
+  --amber-soft: #fcf4e2;
+  --red: #b45451;
+  --red-soft: #fbeeea;
+  --shadow: 0 12px 40px #253a2b0c;
+}
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --bg: #171d19;
+  --surface: #202923;
+  --sidebar: #1b231e;
+  --surface-subtle: #252e27;
+  --surface-active: #2d4030;
+  --text: #e4eade;
+  --muted: #a1b29d;
+  --border: #354237;
+  --border-strong: #4b5f4d;
+  --primary: #aad095;
+  --primary-hover: #c0e3ad;
+  --on-primary: #17261a;
+  --green: #aed3a3;
+  --green-soft: #2a3d2d;
+  --amber: #e6bb6c;
+  --amber-soft: #3c3323;
+  --red: #f29c91;
+  --red-soft: #432d2a;
+  --shadow: 0 12px 40px #0003;
+}

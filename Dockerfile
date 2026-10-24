@@ -9,6 +9,11 @@ RUN npm run build
 # 使用官方的、轻量级的 Python 镜像作为基础
 FROM hub.baixiaosheng.de/python:3.11-slim
 
+ARG CODEBUDDY_VERSION=1.0.0
+ARG CODEBUDDY_REVISION=""
+ENV CODEBUDDY_VERSION=${CODEBUDDY_VERSION} \
+    CODEBUDDY_REVISION=${CODEBUDDY_REVISION}
+
 # 设置容器内的工作目录
 WORKDIR /app
 

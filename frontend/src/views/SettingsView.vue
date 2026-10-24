@@ -1,97 +1,138 @@
 <script setup>
-import { onMounted, ref } from 'vue'
-import { LockKeyhole, RefreshCw, Save, Settings2 } from '@lucide/vue'
-import { apiFetch } from '../lib/api'
-import { notify } from '../lib/notify'
-
-const readonlyKeys = ref(new Set([
-  'CODEBUDDY_HOST',
-  'CODEBUDDY_PORT',
-  'CODEBUDDY_CREDS_DIR',
-  'WORKBUDDY_CREDS_DIR',
-  'CODEBUDDY_LOG_LEVEL',
-]))
-const loading = ref(true)
-const saving = ref(false)
-const settings = ref({})
-const labels = ref({})
-
-async function load() {
-  loading.value = true
-  try {
-    const data = await apiFetch('/api/settings')
-    settings.value = { ...(data.settings || {}) }
-    labels.value = data.labels || {}
-    readonlyKeys.value = new Set(data.readonly_keys || [])
-  } catch (error) {
-    notify(`设置加载失败：${error.message}`, 'error')
-  } finally {
-    loading.value = false
-  }
-}
-
-async function save() {
-  saving.value = true
-  try {
-    const editable = Object.fromEntries(Object.entries(settings.value).filter(([key]) => !readonlyKeys.value.has(key)))
-    const result = await apiFetch('/api/settings', { method: 'POST', body: JSON.stringify({ settings: editable }) })
-    notify(result.message || '设置已保存', 'success')
-    await load()
-  } catch (error) {
-    notify(`保存失败：${error.message}`, 'error')
-  } finally {
-    saving.value = false
-  }
-}
-
-function inputType(key) {
-  return key.toLowerCase().includes('password') ? 'password' : 'text'
-}
-
-onMounted(load)
+import { LockKeyhole, Save } from "@lucide/vue";
+import PageHeader from "../components/PageHeader.vue";
+import ResourceNotice from "../components/ResourceNotice.vue";
+import { useSettings } from "../composables/useSettings";
+const {
+  settings,
+  labels,
+  readonly,
+  loading,
+  saving,
+  error,
+  dirty,
+  save,
+  reset,
+  load,
+} = useSettings();
+const groups = [
+  {
+    title: "访问与站点",
+    description: "访问密码用于管理端登录及 API Bearer 认证。",
+    keys: ["CODEBUDDY_PASSWORD", "CODEBUDDY_SITE"],
+  },
+  {
+    title: "自动签到",
+    description: "使用 WorkBuddy 凭证领取奖励，执行时间采用北京时间。",
+    keys: [
+      "CODEBUDDY_AUTO_CHECKIN",
+      "CODEBUDDY_CHECKIN_TIME",
+      "CODEBUDDY_BARK_URL",
+    ],
+  },
+  {
+    title: "部署信息",
+    description: "这些参数由服务器环境配置管理，修改后需要重启服务。",
+    keys: [
+      "CODEBUDDY_HOST",
+      "CODEBUDDY_PORT",
+      "CODEBUDDY_CREDS_DIR",
+      "WORKBUDDY_CREDS_DIR",
+      "CODEBUDDY_LOG_LEVEL",
+    ],
+  },
+];
 </script>
-
 <template>
   <section class="view-stack settings-view">
-    <div class="view-toolbar">
-      <div><p class="eyebrow">Runtime configuration</p><h2>服务设置</h2></div>
-      <button class="icon-button" title="重新加载" @click="load"><RefreshCw :size="18" :class="{ spin: loading }" /></button>
-    </div>
-
-    <section class="settings-section">
-      <header><div><Settings2 :size="19" /><h3>运行参数</h3></div></header>
-      <div v-if="loading" class="empty-state"><RefreshCw class="spin" :size="20" />加载中</div>
-      <form v-else class="settings-form" @submit.prevent="save">
-        <label v-for="(value, key) in settings" :key="key" class="setting-row">
-          <span><strong>{{ labels[key] || key }}</strong><small>{{ key }}</small></span>
-          <div class="setting-control">
-            <select v-if="key === 'CODEBUDDY_SITE'" v-model="settings[key]" :disabled="readonlyKeys.has(key)">
-              <option value="china">china - 国内站</option>
-              <option value="international">international - 国际站</option>
-            </select>
-            <select v-else-if="key === 'CODEBUDDY_AUTO_CHECKIN'" v-model="settings[key]" :disabled="readonlyKeys.has(key)">
-              <option value="true">开启</option>
-              <option value="false">关闭</option>
-            </select>
-            <input
-              v-else-if="key === 'CODEBUDDY_CHECKIN_TIME'"
-              v-model="settings[key]"
-              type="time"
-              :disabled="readonlyKeys.has(key)"
-            />
-            <input
-              v-else
-              v-model="settings[key]"
-              :type="inputType(key)"
-              :disabled="readonlyKeys.has(key)"
-            />
-            <LockKeyhole v-if="readonlyKeys.has(key)" :size="16" title="由 .env 管理" />
+    <PageHeader
+      title="服务设置"
+      eyebrow="SETTINGS"
+      description="配置访问方式与日常任务。"
+    />
+    <ResourceNotice :error="error" @retry="load" />
+    <div v-if="loading" class="empty-state">正在读取设置…</div>
+    <form
+      v-else-if="Object.keys(settings).length"
+      class="view-stack"
+      @submit.prevent="save"
+    >
+      <section
+        v-for="group in groups"
+        :key="group.title"
+        class="data-section settings-section"
+      >
+        <header>
+          <div>
+            <h3>{{ group.title }}</h3>
+            <p class="page-description">{{ group.description }}</p>
           </div>
-        </label>
-        <div class="form-actions">
-          <button class="button primary" type="submit" :disabled="saving"><Save :size="17" />{{ saving ? '保存中' : '保存设置' }}</button>
+          <LockKeyhole v-if="group.title === '部署信息'" :size="18" />
+        </header>
+        <div class="settings-form">
+          <label v-for="key in group.keys" :key="key" class="setting-row"
+            ><span
+              ><strong>{{ labels[key] || key }}</strong
+              ><small>{{ key }}</small></span
+            >
+            <div class="setting-control">
+              <select
+                v-if="key === 'CODEBUDDY_SITE'"
+                v-model="settings[key]"
+                :disabled="saving"
+              >
+                <option value="china">国内站</option>
+                <option value="international">国际站</option></select
+              ><select
+                v-else-if="key === 'CODEBUDDY_AUTO_CHECKIN'"
+                v-model="settings[key]"
+                :disabled="saving"
+              >
+                <option value="true">开启</option>
+                <option value="false">关闭</option></select
+              ><input
+                v-else
+                v-model="settings[key]"
+                :disabled="readonly.includes(key) || saving"
+                :required="
+                  ['CODEBUDDY_PASSWORD', 'CODEBUDDY_CHECKIN_TIME'].includes(key)
+                "
+                :type="
+                  key === 'CODEBUDDY_PASSWORD'
+                    ? 'password'
+                    : key === 'CODEBUDDY_CHECKIN_TIME'
+                      ? 'time'
+                      : key === 'CODEBUDDY_BARK_URL'
+                        ? 'url'
+                        : 'text'
+                "
+                :autocomplete="
+                  key === 'CODEBUDDY_PASSWORD' ? 'new-password' : 'off'
+                "
+                :placeholder="
+                  key === 'CODEBUDDY_BARK_URL' ? '留空则不推送' : ''
+                "
+              /></div
+          ></label>
         </div>
-      </form>
-    </section>
+      </section>
+      <footer class="save-bar">
+        <span :class="{ 'error-text': dirty }">{{
+          dirty ? "有未保存的修改" : "所有设置已保存"
+        }}</span>
+        <div class="toolbar-actions">
+          <button
+            type="button"
+            class="button secondary"
+            :disabled="!dirty || saving"
+            @click="reset"
+          >
+            放弃修改</button
+          ><button class="button primary" :disabled="!dirty || saving">
+            <Save :size="16" />{{ saving ? "保存中…" : "保存设置" }}
+          </button>
+        </div>
+      </footer>
+    </form>
   </section>
 </template>

@@ -39,88 +39,126 @@ class CodeBuddyTokenManager:
         """加载所有token文件"""
         current_filename = None
         if 0 <= self.current_index < len(self.credentials):
-            current_filename = os.path.basename(self.credentials[self.current_index]['file_path'])
+            current_filename = os.path.basename(
+                self.credentials[self.current_index]["file_path"]
+            )
+        manual_filename = None
+        if (
+            self.manual_selected_index is not None
+            and 0 <= self.manual_selected_index < len(self.credentials)
+        ):
+            manual_filename = os.path.basename(
+                self.credentials[self.manual_selected_index]["file_path"]
+            )
         previous_cooldowns = {
-            os.path.basename(self.credentials[index]['file_path']): until
+            os.path.basename(self.credentials[index]["file_path"]): until
             for index, until in self.cooldowns.items()
             if 0 <= index < len(self.credentials)
         }
         self.credentials = []
         self.current_index = -1
-        
+
         logger.info(f"Loading CodeBuddy credentials from: {self.creds_dir}")
-        
+
         if not os.path.exists(self.creds_dir):
             os.makedirs(self.creds_dir)
-            logger.warning(f"Credentials directory created at {self.creds_dir}. No credentials found.")
+            logger.warning(
+                f"Credentials directory created at {self.creds_dir}. No credentials found."
+            )
             return
-        
-        token_files = sorted(glob.glob(os.path.join(self.creds_dir, '*.json')))
+
+        token_files = sorted(glob.glob(os.path.join(self.creds_dir, "*.json")))
         for file_path in token_files:
             try:
-                with open(file_path, 'r', encoding='utf-8') as f:
+                with open(file_path, "r", encoding="utf-8") as f:
                     data = json.load(f)
-                    if 'bearer_token' in data:
-                        self.credentials.append({
-                            'file_path': file_path,
-                            'data': data
-                        })
-                        logger.info(f"Successfully loaded credential: {os.path.basename(file_path)}")
+                    if "bearer_token" in data:
+                        self.credentials.append({"file_path": file_path, "data": data})
+                        logger.info(
+                            f"Successfully loaded credential: {os.path.basename(file_path)}"
+                        )
                     else:
-                        logger.warning(f"Skipping invalid credential file (missing bearer_token): {os.path.basename(file_path)}")
+                        logger.warning(
+                            f"Skipping invalid credential file (missing bearer_token): {os.path.basename(file_path)}"
+                        )
             except Exception as e:
-                logger.error(f"Failed to load credential file {os.path.basename(file_path)}: {e}")
-        
+                logger.error(
+                    f"Failed to load credential file {os.path.basename(file_path)}: {e}"
+                )
+
         logger.info(f"Loaded a total of {len(self.credentials)} CodeBuddy credentials.")
         self.cooldowns = {}
+        self.manual_selected_index = None
         for index, credential in enumerate(self.credentials):
-            filename = os.path.basename(credential['file_path'])
+            filename = os.path.basename(credential["file_path"])
+            if filename == manual_filename:
+                self.manual_selected_index = index
             if filename == current_filename:
                 self.current_index = index
             if filename in previous_cooldowns:
                 self.cooldowns[index] = previous_cooldowns[filename]
-    
+        if self.mode == "manual" and self.manual_selected_index is None:
+            self.mode = "auto"
+
     def load_state(self):
         """加载管理器状态，兼容旧版字段"""
         try:
             if os.path.exists(self.state_file):
-                with open(self.state_file, 'r', encoding='utf-8') as f:
+                with open(self.state_file, "r", encoding="utf-8") as f:
                     state = json.load(f)
 
                 # 新版: 显式 mode 字段
-                saved_mode = state.get('mode')
-                if saved_mode in ('auto', 'manual'):
+                saved_mode = state.get("mode")
+                if saved_mode in ("auto", "manual"):
                     self.mode = saved_mode
                 else:
                     # 兼容旧版: 无 mode 字段时根据 manual_selected_index / auto_rotation_enabled 推导
-                    if state.get('manual_selected_index') is not None:
-                        self.mode = 'manual'
+                    if state.get("manual_selected_index") is not None:
+                        self.mode = "manual"
                     else:
-                        self.mode = 'auto' if state.get('auto_rotation_enabled', True) else 'manual'
+                        self.mode = (
+                            "auto" if state.get("auto_rotation_enabled", True) else "manual"
+                        )
 
                 # 恢复手动选择索引
-                saved_manual_index = state.get('manual_selected_index')
-                if saved_manual_index is not None and 0 <= saved_manual_index < len(self.credentials):
-                    saved_filename = state.get('manual_selected_filename')
-                    current_filename = os.path.basename(self.credentials[saved_manual_index]['file_path'])
+                saved_manual_index = state.get("manual_selected_index")
+                if saved_manual_index is not None and 0 <= saved_manual_index < len(
+                    self.credentials
+                ):
+                    saved_filename = state.get("manual_selected_filename")
+                    current_filename = os.path.basename(
+                        self.credentials[saved_manual_index]["file_path"]
+                    )
                     if saved_filename == current_filename:
                         self.manual_selected_index = saved_manual_index
                         self.current_index = saved_manual_index
-                        logger.info(f"Restored manual selection: {current_filename} (index: {saved_manual_index})")
+                        logger.info(
+                            f"Restored manual selection: {current_filename} (index: {saved_manual_index})"
+                        )
                     else:
-                        logger.warning("Saved credential filename mismatch, ignoring saved selection")
-                        self.mode = 'auto'
+                        logger.warning(
+                            "Saved credential filename mismatch, ignoring saved selection"
+                        )
+                        self.mode = "auto"
 
                 # 恢复当前索引
                 if self.manual_selected_index is None:
-                    saved_current_index = state.get('current_index', 0)
+                    saved_current_index = next(
+                        (
+                            i
+                            for i, item in enumerate(self.credentials)
+                            if os.path.basename(item["file_path"])
+                            == state.get("current_filename")
+                        ),
+                        state.get("current_index", 0),
+                    )
                     if 0 <= saved_current_index < len(self.credentials):
                         self.current_index = saved_current_index
 
-                saved_cooldowns = state.get('cooldowns', {})
+                saved_cooldowns = state.get("cooldowns", {})
                 if isinstance(saved_cooldowns, dict):
                     for index, credential in enumerate(self.credentials):
-                        filename = os.path.basename(credential['file_path'])
+                        filename = os.path.basename(credential["file_path"])
                         try:
                             until = float(saved_cooldowns.get(filename, 0))
                         except (TypeError, ValueError):
@@ -128,10 +166,12 @@ class CodeBuddyTokenManager:
                         if until > time.time():
                             self.cooldowns[index] = until
 
-                logger.info(f"State loaded: mode={self.mode}, current_index={self.current_index}")
+                logger.info(
+                    f"State loaded: mode={self.mode}, current_index={self.current_index}"
+                )
         except Exception as e:
             logger.warning(f"Failed to load manager state: {e}")
-    
+
     def save_state(self):
         """保存管理器状态"""
         try:
@@ -139,30 +179,38 @@ class CodeBuddyTokenManager:
                 os.makedirs(self.creds_dir)
 
             state = {
-                'mode': self.mode,
-                'current_index': self.current_index,
-                'manual_selected_index': self.manual_selected_index,
-                'manual_selected_filename': None,
-                'cooldowns': {
-                    os.path.basename(self.credentials[index]['file_path']): until
+                "mode": self.mode,
+                "current_index": self.current_index,
+                "current_filename": (
+                    os.path.basename(self.credentials[self.current_index]["file_path"])
+                    if 0 <= self.current_index < len(self.credentials)
+                    else None
+                ),
+                "manual_selected_index": self.manual_selected_index,
+                "manual_selected_filename": None,
+                "cooldowns": {
+                    os.path.basename(self.credentials[index]["file_path"]): until
                     for index, until in self.cooldowns.items()
                     if 0 <= index < len(self.credentials) and until > time.time()
                 },
-                'saved_at': int(time.time())
+                "saved_at": int(time.time()),
             }
 
-            if self.manual_selected_index is not None and 0 <= self.manual_selected_index < len(self.credentials):
-                state['manual_selected_filename'] = os.path.basename(
-                    self.credentials[self.manual_selected_index]['file_path']
+            if (
+                self.manual_selected_index is not None
+                and 0 <= self.manual_selected_index < len(self.credentials)
+            ):
+                state["manual_selected_filename"] = os.path.basename(
+                    self.credentials[self.manual_selected_index]["file_path"]
                 )
 
-            with open(self.state_file, 'w', encoding='utf-8') as f:
+            with open(self.state_file, "w", encoding="utf-8") as f:
                 json.dump(state, f, indent=2, ensure_ascii=False)
 
             logger.debug(f"Manager state saved to {self.state_file}")
         except Exception as e:
             logger.error(f"Failed to save manager state: {e}")
-    
+
     def is_token_expired(self, credential_data: Dict) -> bool:
         """检查token是否过期"""
         try:
@@ -501,10 +549,6 @@ class CodeBuddyTokenManager:
 
             # 重新加载凭证列表，重置索引等状态
             self.load_all_tokens()
-            # 清理手动选择（若已删除的索引影响手动选择状态）
-            if self.manual_selected_index is not None and self.manual_selected_index == index:
-                self.manual_selected_index = None
-                logger.info("Cleared manual selection because deleted credential was selected")
             self.save_state()
             return True
         except Exception as e:
@@ -533,6 +577,61 @@ class CodeBuddyTokenManager:
             return False
         self.save_state()
         return True
+
+    def get_routing_snapshot(self) -> Dict:
+        """Project routing state without selecting or consuming a credential."""
+        now = time.time()
+        rows = []
+        eligible = []
+        for info, credential in zip(self.get_credentials_info(), self.credentials):
+            index = info["index"]
+            data = credential["data"]
+            until = self.cooldowns.get(index, 0)
+            if data.get("session_dead_at"):
+                state = "reauthorize"
+            elif not self._can_use_credential(data):
+                state = "expired"
+            elif until > now and not (
+                self.mode == "manual" and index == self.manual_selected_index
+            ):
+                state = "cooldown"
+            else:
+                state = "refreshable" if info["is_expired"] else "available"
+                eligible.append(index)
+            rows.append(
+                {
+                    key: value
+                    for key, value in info.items()
+                    if key not in ("file_path", "scope", "token_type")
+                }
+            )
+            rows[-1].update(
+                state=state, cooldown_until=int(until * 1000) if until > now else None
+            )
+        selected = (
+            self.manual_selected_index if self.mode == "manual" else self.current_index
+        )
+        active = selected if selected in eligible else None
+        # Reflect the exact next selection rule without incrementing usage counters.
+        if self.mode == "auto" and active is None and eligible:
+            active = next((i for i in eligible if i > self.current_index), eligible[0])
+        for row in rows:
+            row["is_current"] = row["index"] == active
+        next_index = None
+        if self.mode == "auto" and active is not None:
+            ordered = [i for i in eligible if i > active] + [
+                i for i in eligible if i < active
+            ]
+            next_index = ordered[0] if ordered else None
+        return {
+            "mode": self.mode,
+            "credentials": rows,
+            "current_index": active,
+            "next_index": next_index,
+            "available": len(eligible),
+            "cooldown_seconds": self.cooldown_seconds,
+            "server_time": int(now * 1000),
+        }
 
     def get_current_credential_info(self) -> Dict:
         """获取当前使用的凭证信息"""

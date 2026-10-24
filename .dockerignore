@@ -16,6 +16,12 @@ __pycache__/
 build/
 dist/
 frontend/node_modules/
+frontend/dist/
+.pytest_cache/
+prototypes/
+.agents/
+.codex/
+.aws/
 
 # Virtual Environment
 .venv
