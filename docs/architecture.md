@@ -68,6 +68,7 @@ flowchart LR
 
 - `CodeBuddyStreamService` 通过构造参数接收 HTTP 客户端、端点解析、凭证管理器、耗尽后的选择函数和观察器；不导入管理端路由或全局数据库。`create_chat_service` 是应用资源的装配入口。
 - `chat/protocol.py` 独立处理 SSE、工具调用转换和非流式聚合；不读取凭证、设置或数据库。
+- `chat/request.py` 负责上游请求转换。CodeBuddy 的 `tool_choice` 仅接受字符串；指定函数时保留该函数的完整工具定义并使用 `required`，不将对象原样转发，不通过重发模拟工具选择。无效或无法表示的选择在本地返回 400。此转换保留 [OpenAI 指定函数的选择语义](https://developers.openai.com/api/reference/resources/chat/subresources/completions/methods/create)。
 - `AttemptObserver` 只观察调用，不决定是否重发。诊断存储失败只记日志，不允许引起模型请求重发。
 - `console/credential_service.py` 协调手动切换和删除；路由负责认证、输入解析和异常到 HTTP 状态的映射。管理操作按文件名定位，避免删除或新增账号后索引漂移。
 - `get_routing_snapshot` 只读地投影当前候选、备用候选、失效与冷却状态，不调用上游、不增加使用次数。可用状态不能用于判断官方剩余积分。

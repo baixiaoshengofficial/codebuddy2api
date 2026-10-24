@@ -7,7 +7,6 @@ import time
 import uuid
 import logging
 import asyncio
-import copy
 import hashlib
 import re
 from typing import Optional, Dict, Any, List
@@ -25,6 +24,7 @@ from .usage_stats_manager import usage_stats_manager
 from .console.diagnostics import DiagnosticsRepository
 from .chat.observation import AttemptObserver
 from .chat.service import CodeBuddyStreamService
+from .chat.request import ChatRequestError, prepare_chat_payload
 from .chat.protocol import SSE_HEADERS, parse_sse_line
 
 from .request_log_manager import (
@@ -34,10 +34,7 @@ from .request_log_manager import (
     get_client_detail,
     request_log_manager,
 )
-from .keyword_replacer import (
-    apply_keyword_replacement_to_messages,
-    apply_keyword_replacement_to_tool_definitions,
-)
+
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
@@ -141,23 +138,12 @@ class RequestProcessor:
     
     @staticmethod
     def prepare_payload(request_body: Dict[str, Any]) -> Dict[str, Any]:
-        """准备请求载荷"""
-        payload = copy.deepcopy(request_body)
-        payload["stream"] = True  # CodeBuddy 只支持流式请求
-        
-        # 处理消息长度要求：CodeBuddy要求至少2条消息
-        messages = payload.get("messages", [])
-        if len(messages) == 1 and messages[0].get("role") == "user":
-            system_msg = {"role": "system", "content": "You are a helpful assistant."}
-            payload["messages"] = [system_msg] + messages
-        
-        # 应用关键词替换，避免上游把 cc-switch/Codex 的兼容提示误判为敏感内容。
-        payload["messages"] = apply_keyword_replacement_to_messages(payload.get("messages", []))
-        if "tools" in payload:
-            payload["tools"] = apply_keyword_replacement_to_tool_definitions(payload.get("tools"))
-        
-        return payload
-    
+        """Map domain validation failures to the public HTTP request boundary."""
+        try:
+            return prepare_chat_payload(request_body)
+        except ChatRequestError as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
+
     @staticmethod
     def validate_request(request_body: Dict[str, Any]) -> None:
         """验证请求参数"""
