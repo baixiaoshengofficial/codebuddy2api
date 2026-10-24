@@ -43,34 +43,30 @@ def is_insufficient_credit_error(value: Any) -> bool:
             value = json.loads(value)
         except (TypeError, ValueError):
             pass
-    if isinstance(value, dict):
-        fields = ("code", "type", "message", "msg", "detail", "error_description")
-        parts = [str(value.get(key, "")) for key in fields]
-        error = value.get("error")
-        if isinstance(error, dict):
-            parts.extend(str(error.get(key, "")) for key in fields)
-        elif error is not None:
-            parts.append(str(error))
-        value = " ".join(parts)
-    message = str(value).lower()
-    return any(
-        marker in message
-        for marker in (
-            "积分不足",
-            "积分已耗尽",
-            "余额不足",
-            "额度不足",
-            "点数不足",
-            "insufficient_credit",
-            "insufficient_quota",
-            "insufficient balance",
-            "insufficient credits",
-            "insufficient_balance",
-            "not enough credit",
-            "credit balance is too low",
-            "credits exhausted",
-        )
-    )
+
+    fields = ("code", "type", "message", "msg", "detail", "error_description")
+
+    def collect_error_parts(item: Any) -> List[str]:
+        if isinstance(item, dict):
+            parts = [str(item.get(key, "")) for key in fields]
+            # CodeBuddy nests quota details under error.data, unlike the
+            # top-level shape used by the other supported error responses.
+            for key in ("error", "data"):
+                if key in item:
+                    parts.extend(collect_error_parts(item[key]))
+            return parts
+        if isinstance(item, list):
+            return [part for nested in item for part in collect_error_parts(nested)]
+        return [str(item)] if item is not None else []
+
+    message = " ".join(collect_error_parts(value)).lower()
+    return any(marker in message for marker in (
+        "积分不足", "积分已耗尽", "余额不足", "余额已耗尽", "额度不足",
+        "额度已用尽", "额度用尽", "额度已耗尽", "点数不足",
+        "insufficient_credit", "insufficient_quota", "insufficient balance",
+        "insufficient credits", "insufficient_balance", "not enough credit",
+        "credit balance is too low", "credits exhausted", "quota exhausted",
+    ))
 
 
 def headers_for_credential(

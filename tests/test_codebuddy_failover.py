@@ -68,12 +68,34 @@ class CreditResponseTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result["choices"][0]["message"]["content"], "ok")
         self.assertEqual(self.manager.current_index, 1)
 
+    async def test_non_stream_retries_codebuddy_nested_quota_error(self):
+        result, seen = await self._request([
+            httpx.Response(429, json={"error": {"data": {
+                "code": 14018, "msg": "额度已用尽，请购买加量包",
+            }}}),
+            self._success(),
+        ])
+        self.assertEqual(seen, ["Bearer token-0", "Bearer token-1"])
+        self.assertEqual(result["choices"][0]["message"]["content"], "ok")
+        self.assertEqual(self.manager.current_index, 1)
+
     async def test_stream_retries_sse_credit_error_before_output(self):
         result, seen = await self._request([
             httpx.Response(200, text=(
                 'data: {"choices":[{"delta":{"role":"assistant"}}]}\n\n'
                 'data: {"error":{"message":"积分不足"}}\n\n'
             )),
+            self._success(),
+        ], stream=True)
+        self.assertEqual(seen, ["Bearer token-0", "Bearer token-1"])
+        self.assertIn('"content": "ok"', result)
+        self.assertNotIn('"error"', result)
+
+    async def test_stream_retries_codebuddy_nested_quota_error(self):
+        result, seen = await self._request([
+            httpx.Response(429, json={"error": {"data": {
+                "code": 14018, "msg": "额度已用尽，请购买加量包",
+            }}}),
             self._success(),
         ], stream=True)
         self.assertEqual(seen, ["Bearer token-0", "Bearer token-1"])
@@ -172,6 +194,9 @@ class CreditResponseTests(unittest.IsolatedAsyncioTestCase):
     def test_credit_detection_is_specific(self):
         self.assertTrue(is_insufficient_credit_error({"error": {"code": "insufficient_quota"}}))
         self.assertTrue(is_insufficient_credit_error(json.dumps({"error": {"message": "积分不足"}})))
+        self.assertTrue(is_insufficient_credit_error({"error": {"data": {
+            "code": 14018, "msg": "额度已用尽",
+        }}}))
         self.assertFalse(is_insufficient_credit_error({"error": {"message": "rate limit exceeded"}}))
         self.assertFalse(is_insufficient_credit_error({"choices": [{"delta": {"content": "积分不足"}}]}))
 
