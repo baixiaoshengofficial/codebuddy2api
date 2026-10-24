@@ -19,15 +19,25 @@ class SessionExpiredError(RuntimeError):
     """The upstream no longer accepts an account's offline session."""
 
 
+class CredentialRefreshUnavailable(RuntimeError):
+    """An expired credential cannot be used while renewal is unavailable."""
+
+
 class CodeBuddyCredentialRefresher:
     REFRESH_INTERVAL = 20 * 60 * 60
     REFRESH_PATH = "/v2/plugin/auth/token/refresh"
     REALM_HOSTS = {"www.codebuddy.cn", "www.codebuddy.ai", "www.workbuddy.ai"}
 
-    def __init__(self, manager=None):
+    def __init__(self, manager=None, client_factory=None):
         self.manager = manager or codebuddy_token_manager
+        self.client_factory = client_factory
         self._locks: Dict[str, asyncio.Lock] = {}
         self._task = None
+
+    def _new_client(self):
+        if self.client_factory is not None:
+            return self.client_factory()
+        return httpx.AsyncClient(timeout=httpx.Timeout(10.0, connect=6.0))
 
     def _current(self, filename: str) -> Dict[str, Any]:
         for item in self.manager.credentials:
@@ -58,6 +68,10 @@ class CodeBuddyCredentialRefresher:
                     raise
                 except (httpx.HTTPError, ValueError) as exc:
                     logger.warning("CodeBuddy keepalive failed for %s: %s", filename, exc)
+                    if expired:
+                        raise CredentialRefreshUnavailable(
+                            "CodeBuddy credential renewal is temporarily unavailable"
+                        ) from exc
             return {**current, **{
                 key: value for key, value in selected.items() if key.startswith("_credential_")
             }}
@@ -82,8 +96,7 @@ class CodeBuddyCredentialRefresher:
         enterprise_id = credential.get("enterprise_id") or credential.get("enterpriseId")
         if enterprise_id:
             headers["X-Enterprise-Id"] = str(enterprise_id)
-        timeout = httpx.Timeout(10.0, connect=6.0)
-        async with httpx.AsyncClient(timeout=timeout) as client:
+        async with self._new_client() as client:
             for attempt in range(2):
                 try:
                     response = await client.post(

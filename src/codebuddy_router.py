@@ -19,7 +19,11 @@ from .auth import authenticate
 from .codebuddy_api_client import codebuddy_api_client
 from .codebuddy_model_manager import codebuddy_model_manager
 from .codebuddy_token_manager import codebuddy_token_manager
-from .codebuddy_refresh import SessionExpiredError, codebuddy_credential_refresher
+from .codebuddy_refresh import (
+    CredentialRefreshUnavailable,
+    SessionExpiredError,
+    codebuddy_credential_refresher,
+)
 from .usage_stats_manager import usage_stats_manager
 from .console.diagnostics import DiagnosticsRepository
 from .chat.observation import AttemptObserver
@@ -200,6 +204,8 @@ async def get_ready_credential(credential_index: Optional[int] = None) -> Dict[s
         credential = CredentialManager.get_valid_credential(credential_index)
         try:
             return await codebuddy_credential_refresher.ensure_fresh(credential)
+        except CredentialRefreshUnavailable:
+            raise HTTPException(status_code=503, detail="CodeBuddy 凭证续期暂时失败，请稍后重试")
         except SessionExpiredError:
             if credential_index is not None:
                 break
