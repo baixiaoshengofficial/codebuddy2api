@@ -1,0 +1,9 @@
+# 源码构建：docker compose -f docker-compose.yml -f docker-compose.build.yml up -d --build --wait
+services:
+  codebuddy2api:
+    image: codebuddy2api:local
+    pull_policy: build
+    build:
+      context: .
+      args:
+        CODEBUDDY_REVISION: "${CODEBUDDY_REVISION:-}"

@@ -117,6 +117,16 @@ CodeBuddy 已过期或需要重新授权的条目、WorkBuddy 已过期或签到
 
 验证：`python -m pytest -q tests/test_credential_reauthorization.py`，覆盖两类产品的原位更新、错误账号、域不匹配、目标删除、列表重排、并发轮询、保存失败、管理鉴权及会话过期。桌面和移动端交互使用模拟授权接口验收，不调用真实模型。
 
+### 授权结果与删除命令
+
+`device_authorization.py` 编排普通登录与保存，`authorization_router.py` 统一 HTTP 结果，两个产品路由负责上游调用、Token 标准化和存储适配。普通登录和重新授权共用公开启动字段白名单及错误适配；成功轮询返回 `saved: true`，不返回 Token、refresh token 或上游原始响应。等待授权为 400 / `authorization_pending`，凭证缺失为 502 / `invalid_token_response`，保存失败为 500 / `save_failed`。普通添加流程匹配已有账号时，也调用管理器的 `replace_credential` 清除旧会话字段。
+
+WorkBuddy 删除使用 `DELETE /workbuddy/credentials/{filename}`，管理器核对实际条目后仅删除该文件。列表重排不改变目标，目标已被删除时返回 404，不删除其他条目。旧 `POST /workbuddy/credentials/delete` 只接受文件名，旧页面仅传序号时返回 409 并提示刷新。内部兼容方法 `delete_credential_by_index` 不作为 HTTP 定位依据。
+
+### Docker 更新方式
+
+默认 `docker-compose.yml` 使用 Docker Hub 的唯一 `latest` 标签，`pull_policy: always` 在启动时检查更新；三个数据卷保留配置与凭证，`--wait` 等待健康检查。源码构建显式叠加 `docker-compose.build.yml`，使用本地镜像和 `pull_policy: build`；远程源码部署脚本同样使用该组合。两套方式均需要 Docker Compose v2 或更新版本。具体更新与版本参数见 README 的 Docker 部署章节。
+
 API 测试以回复文本为主，保留原始 JSON；HTTP 200 内的 SSE `error`、异常 EOF、无效 JSON 均按失败处理。停止接收只中止浏览器等待，不能保证上游尚未计费，也不会自动重发。
 
 ### 验证与发布

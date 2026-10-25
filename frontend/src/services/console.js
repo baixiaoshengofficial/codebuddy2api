@@ -21,8 +21,10 @@ export const consoleApi = {
     (await apiFetch("/workbuddy/credentials")).credentials || [],
   checkin: () => apiFetch("/api/checkin"),
   runCheckin: () => apiFetch("/api/checkin/run", { method: "POST" }),
-  deleteWorkbuddy: (index) =>
-    apiFetch("/workbuddy/credentials/delete", json("POST", { index })),
+  deleteWorkbuddy: (filename) =>
+    apiFetch(`/workbuddy/credentials/${encodeURIComponent(filename)}`, {
+      method: "DELETE",
+    }),
   startAuthorization: (product, signal, filename) =>
     filename
       ? apiFetch(`/${product}/auth/reauthorize`, {

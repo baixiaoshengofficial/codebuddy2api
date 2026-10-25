@@ -134,7 +134,7 @@ class WorkBuddyTokenManager:
             )
             if same_user or (new_phone and stored_phone == new_phone):
                 try:
-                    self.update_credential(os.path.basename(existing["file_path"]), credential_data)
+                    self.replace_credential(os.path.basename(existing["file_path"]), credential_data)
                     return True
                 except Exception as exc:
                     logger.error("Failed to replace WorkBuddy credential: %s", exc)
@@ -189,17 +189,30 @@ class WorkBuddyTokenManager:
         self.load_all_tokens()
         return data
 
+    def delete_credential(self, filename: str) -> None:
+        """Delete exactly the selected file, independent of list ordering."""
+        if not filename or os.path.basename(filename) != filename:
+            raise FileNotFoundError("WorkBuddy credential not found")
+        self.load_all_tokens()
+        selected = next(
+            (item for item in self.credentials
+             if os.path.basename(item["file_path"]) == filename),
+            None,
+        )
+        if selected is None:
+            raise FileNotFoundError("WorkBuddy credential not found")
+        os.remove(selected["file_path"])
+        self.load_all_tokens()
+
     def delete_credential_by_index(self, index: int) -> bool:
+        """Compatibility for in-process callers; HTTP commands require filenames."""
         try:
             if not (0 <= index < len(self.credentials)):
                 logger.error("Invalid WorkBuddy credential index for deletion: %s", index)
                 return False
             file_path = self.credentials[index]["file_path"]
             filename = os.path.basename(file_path)
-            if os.path.exists(file_path):
-                os.remove(file_path)
-                logger.info("Deleted WorkBuddy credential: %s", filename)
-            self.load_all_tokens()
+            self.delete_credential(filename)
             return True
         except Exception as exc:
             logger.error("Failed to delete WorkBuddy credential at index %s: %s", index, exc)

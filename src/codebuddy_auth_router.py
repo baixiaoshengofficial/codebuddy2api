@@ -8,7 +8,7 @@ import uuid
 import time
 from typing import Dict, Any, Optional
 from fastapi.responses import JSONResponse
-from fastapi import APIRouter, Depends, Body
+from fastapi import APIRouter
 
 from config import (
     get_codebuddy_api_endpoint,
@@ -17,7 +17,7 @@ from config import (
 )
 import logging
 
-from .auth import authenticate
+from .authorization_router import create_authorization_router
 from .reauthorization_router import create_reauthorization_router
 from .codebuddy_token_manager import codebuddy_token_manager
 from .credential_utils import build_credential_filename, decode_jwt_claims, first_claim, select_claims
@@ -271,7 +271,6 @@ def build_codebuddy_credential(token_data: Dict[str, Any]) -> Dict[str, Any]:
 
 async def save_codebuddy_token(token_data: Dict[str, Any]) -> bool:
     try:
-        from .codebuddy_token_manager import codebuddy_token_manager
         credential_data = build_codebuddy_credential(token_data)
         timestamp = int(time.time())
         filename = build_credential_filename("codebuddy", credential_data["user_id"], timestamp)
@@ -292,90 +291,6 @@ async def save_codebuddy_token(token_data: Dict[str, Any]) -> bool:
         return False
 
 # --- API Endpoints ---
-@router.get("/auth/start", summary="Start CodeBuddy Authentication")
-async def start_device_auth(_token: str = Depends(authenticate)):
-    """启动CodeBuddy认证流程"""
-    try:
-        logger.info("开始启动CodeBuddy认证流程...")
-        
-        # 尝试真实的CodeBuddy认证API
-        real_auth_result = await start_codebuddy_auth()
-        
-        if real_auth_result.get('success'):
-            logger.info("真实CodeBuddy认证API启动成功!")
-            return real_auth_result
-        else:
-            logger.warning(f"真实认证API失败: {real_auth_result}")
-            return real_auth_result
-        
-    except Exception as e:
-        logger.error(f"认证启动过程发生异常: {e}")
-        return {
-            "success": False,
-            "error": "Unexpected error",
-            "message": f"认证启动失败: {str(e)}"
-        }
-
-@router.post("/auth/poll", summary="Poll for OAuth token")
-async def poll_for_token(
-    device_code: str = Body(None, embed=True),
-    code_verifier: str = Body(None, embed=True),
-    auth_state: str = Body(None, embed=True),
-    _token: str = Depends(authenticate),
-):
-    """轮询CodeBuddy token端点"""
-    from .codebuddy_token_manager import codebuddy_token_manager
-    
-    # 如果有auth_state，说明是真实的CodeBuddy认证流程
-    if auth_state:
-        logger.info(f"轮询真实CodeBuddy认证状态: {auth_state}")
-        poll_result = await poll_codebuddy_auth_status(auth_state)
-        
-        if poll_result.get('status') == 'success':
-            # 认证成功，保存token
-            token_data = poll_result.get('token_data', {})
-            if token_data:
-                # 提取token信息
-                bearer_token = token_data.get('access_token') or token_data.get('bearer_token')
-                if bearer_token:
-                    # 保存token
-                    token_saved = await save_codebuddy_token(token_data)
-                    return JSONResponse(content={
-                        "access_token": bearer_token,
-                        "token_type": token_data.get('token_type', 'Bearer'),
-                        "expires_in": token_data.get('expires_in'),
-                        "refresh_token": token_data.get('refresh_token'),
-                        "scope": token_data.get('scope'),
-                        "saved": token_saved,
-                        "message": "认证成功！🎉",
-                        "user_info": token_data,
-                        "domain": token_data.get('domain')
-                    }, status_code=200)
-                else:
-                    return JSONResponse(content={
-                        "error": "invalid_token_response",
-                        "error_description": "API返回的响应中没有找到token"
-                    }, status_code=400)
-        elif poll_result.get('status') == 'pending':
-            # 仍在等待
-            return JSONResponse(content={
-                "error": "authorization_pending",
-                "error_description": poll_result.get('message', '等待用户登录...'),
-                "code": poll_result.get('code')
-            }, status_code=400)
-        else:
-            # 错误状态
-            return JSONResponse(content={
-                "error": "auth_error",
-                "error_description": poll_result.get('message', '认证过程发生错误'),
-                "details": poll_result
-            }, status_code=400)
-    else:
-        return JSONResponse(content={
-            "error": "missing_parameters",
-            "error_description": "缺少必要的参数：auth_state"
-        }, status_code=400)
-
 @router.get("/auth/callback", summary="OAuth2 callback endpoint")
 async def oauth_callback(code: str = None, state: str = None, error: str = None):
     """OAuth2回调端点"""
@@ -394,11 +309,22 @@ async def oauth_callback(code: str = None, state: str = None, error: str = None)
     )
 
 
+router.include_router(
+    create_authorization_router(
+        lambda: start_codebuddy_auth(),
+        lambda state: poll_codebuddy_auth_status(state),
+        lambda token: save_codebuddy_token(token),
+    )
+)
+
+
 # Targeted renewal uses the same provider login and token normalization.
 
-router.include_router(create_reauthorization_router(
-    lambda: codebuddy_token_manager,
-    lambda: start_codebuddy_auth(),
-    lambda state: poll_codebuddy_auth_status(state),
-    build_codebuddy_credential,
-))
+router.include_router(
+    create_reauthorization_router(
+        lambda: codebuddy_token_manager,
+        lambda: start_codebuddy_auth(),
+        lambda state: poll_codebuddy_auth_status(state),
+        build_codebuddy_credential,
+    )
+)

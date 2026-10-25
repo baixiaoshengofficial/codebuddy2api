@@ -21,9 +21,8 @@ const { data, loading, error, refresh } = useResource(
 );
 const { busy, run } = useAction();
 const rows = computed(() =>
-  data.value.credentials.map((row, index) => ({
+  data.value.credentials.map((row) => ({
     ...row,
-    index,
     checkin:
       data.value.checkin.accounts?.find(
         (item) => item.filename === row.filename,
@@ -46,7 +45,7 @@ async function remove(row) {
   )
     return;
   await run(async () => {
-    await consoleApi.deleteWorkbuddy(row.index);
+    await consoleApi.deleteWorkbuddy(row.filename);
     await refresh();
   }, "已删除 WorkBuddy 凭证");
 }

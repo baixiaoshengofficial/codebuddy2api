@@ -6,12 +6,12 @@ import time
 from dataclasses import dataclass, field
 
 from .credential_utils import decode_jwt_claims
+from .device_authorization import AuthorizationError, public_authorization_start
 
 
-class ReauthorizationError(ValueError):
+class ReauthorizationError(AuthorizationError):
     def __init__(self, status, message):
-        super().__init__(message)
-        self.status = status
+        super().__init__(status, "reauthorization_failed", message)
 
 
 def account_identifiers(data):
@@ -78,9 +78,7 @@ class CredentialReauthorization:
             for key, session in self.sessions.items()
             if session.deadline > self.clock()
         }
-        result = await self.start_login()
-        if not result.get("success") or not result.get("auth_state"):
-            raise ReauthorizationError(502, result.get("message") or "启动重新授权失败")
+        result = public_authorization_start(await self.start_login())
         state = result["auth_state"]
         if state in self.sessions:
             raise ReauthorizationError(409, "授权会话重复，请重新开始")
@@ -106,7 +104,7 @@ class CredentialReauthorization:
             if result.get("status") == "pending":
                 return {"pending": True, "message": result.get("message")}
             if result.get("status") != "success":
-                raise ReauthorizationError(400, result.get("message") or "重新授权失败")
+                raise ReauthorizationError(400, "重新授权失败或已过期，请重新开始")
             token_data = result.get("token_data") or {}
             if not (token_data.get("access_token") or token_data.get("bearer_token")):
                 raise ReauthorizationError(502, "上游未返回有效凭证")

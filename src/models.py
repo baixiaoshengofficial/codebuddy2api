@@ -5,6 +5,15 @@ from typing import List, Optional, Dict, Any, Union
 from pydantic import BaseModel, Field
 
 
+class AuthorizationPollCommand(BaseModel):
+    auth_state: Optional[str] = Field(None, min_length=1, max_length=2048)
+
+
+class CredentialDeleteCommand(BaseModel):
+    # Legacy index-only requests are rejected explicitly by the HTTP boundary.
+    filename: Optional[str] = Field(None, min_length=1, max_length=255)
+
+
 class Message(BaseModel):
     role: str
     content: Union[str, List[Dict[str, Any]]]  # Support both string and complex list format

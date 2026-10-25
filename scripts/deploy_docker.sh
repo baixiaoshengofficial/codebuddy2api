@@ -97,6 +97,11 @@ COPYFILE_DISABLE=1 tar --no-xattrs -czf "$ARCHIVE" -C "$ROOT_DIR" \
   --exclude='config/*.db' \
   --exclude='config/*.db-*' \
   --exclude='.codebuddy_creds' \
+  --exclude='.workbuddy_creds' \
+  --exclude='prototypes' \
+  --exclude='.agents' \
+  --exclude='.codex' \
+  --exclude='.aws' \
   .
 
 cat > "$ENV_FILE" <<EOF
@@ -137,7 +142,8 @@ fi
 if docker compose version >/dev/null 2>&1; then
   COMPOSE='docker compose'
 elif command -v docker-compose >/dev/null 2>&1; then
-  COMPOSE='docker-compose'
+  echo 'Docker Compose v2 or newer is required.' >&2
+  exit 2
 else
   echo 'Docker Compose is not installed.' >&2
   exit 2
@@ -147,8 +153,8 @@ tar -xzf '$REMOTE_ARCHIVE' -C '$DEPLOY_DIR'
 mkdir -p '$DEPLOY_DIR/.workbuddy_creds' '$DEPLOY_DIR/.codebuddy_creds' '$DEPLOY_DIR/config'
 chmod 600 '$DEPLOY_DIR/.env'
 cd '$DEPLOY_DIR'
-\$COMPOSE up -d --build
-\$COMPOSE ps
+\$COMPOSE -f docker-compose.yml -f docker-compose.build.yml up -d --build --wait
+\$COMPOSE -f docker-compose.yml -f docker-compose.build.yml ps
 rm -f '$REMOTE_ARCHIVE'"
 
 echo "==> Done"

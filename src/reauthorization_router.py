@@ -1,15 +1,12 @@
 """Shared HTTP adapter for credential-specific provider authorization."""
 
-import logging
-
-from fastapi import APIRouter, Depends, HTTPException
-from fastapi.responses import JSONResponse
+from fastapi import APIRouter, Depends
 from pydantic import BaseModel, Field
 
 from .auth import authenticate
-from .credential_reauthorization import CredentialReauthorization, ReauthorizationError
-
-logger = logging.getLogger(__name__)
+from .authorization_router import authorization_response
+from .device_authorization import AuthorizationError
+from .credential_reauthorization import CredentialReauthorization
 
 
 class ReauthorizationStart(BaseModel):
@@ -28,30 +25,20 @@ def create_reauthorization_router(
     )
     router = APIRouter(dependencies=[Depends(authenticate)])
 
-    async def execute(action):
-        try:
-            return await action
-        except ReauthorizationError as exc:
-            raise HTTPException(exc.status, str(exc))
-        except OSError:
-            logger.exception("Credential reauthorization persistence failed")
-            raise HTTPException(500, "保存凭证失败，请重试")
-
     @router.post("/auth/reauthorize")
     async def start(command: ReauthorizationStart):
-        return await execute(service.start(command.filename))
+        return await authorization_response(service.start(command.filename))
 
     @router.post("/auth/reauthorize/poll")
     async def poll(command: ReauthorizationPoll):
-        result = await execute(service.poll(command.auth_state))
-        if result.get("pending"):
-            return JSONResponse(
-                {
-                    "error": "authorization_pending",
-                    "error_description": result.get("message") or "等待登录",
-                },
-                status_code=400,
-            )
-        return result
+        async def action():
+            result = await service.poll(command.auth_state)
+            if result.get("pending"):
+                raise AuthorizationError(
+                    400, "authorization_pending", "等待用户登录授权"
+                )
+            return result
+
+        return await authorization_response(action())
 
     return router

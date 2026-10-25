@@ -452,15 +452,9 @@ class CodeBuddyTokenManager:
                 stored = existing['data']
                 if stored.get('user_id') == user_id and stored.get('domain') == domain:
                     try:
-                        remove_keys = ['session_dead_at', 'session_dead_reason']
-                        if not credential_data.get('expires_in'):
-                            remove_keys.append('expires_in')
-                        if not credential_data.get('refresh_token'):
-                            remove_keys.append('refresh_token')
-                        self.update_credential(
+                        self.replace_credential(
                             os.path.basename(existing['file_path']),
                             credential_data,
-                            remove_keys=remove_keys,
                         )
                         return True
                     except Exception as exc:

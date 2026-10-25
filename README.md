@@ -25,7 +25,7 @@
 
 首先，克隆本项目到本地：
 ```bash
-git clone https://github.com/xueyue33/codebuddy2api.git
+git clone https://github.com/baixiaoshengofficial/codebuddy2api.git
 cd codebuddy2api
 ```
 
@@ -69,7 +69,7 @@ CODEBUDDY_PASSWORD=your_secret_password_for_this_service
 1.  启动服务后，使用浏览器访问 `http://127.0.0.1:8001` (或你自定义的地址)。
 2.  输入你在 `.env` 文件中设置的 `CODEBUDDY_PASSWORD` 登录管理面板。
 3.  进入 “**凭证管理**” 标签页。
-4.  点击 **自动获取认证** 卡片中的 “**开始认证**” 按钮。
+4.  点击“**添加凭证**”；已有账号过期时，点击对应条目的“**重新授权**”。
 5.  系统会自动生成一个 CodeBuddy 的官方登录链接。请点击 “**打开链接**” 按钮。
 6.  在新打开的 CodeBuddy 页面中完成登录授权。
 7.  **完成！** 登录成功后，请关闭登录页面。本服务会自动检测到登录状态，并为你获取、解析和保存新的认证凭证。你只需点击 “**刷新列表**” 即可看到新添加的凭证。
@@ -92,9 +92,42 @@ python web.py
 
 服务启动后，你就可以开始使用了！
 
-### 6. 一键 Docker 部署到调试服务器
+### 6. Docker 部署与更新（推荐）
 
-仓库提供了 `Makefile` 和 `scripts/deploy_docker.sh`，可将当前代码打包上传到服务器并执行 `docker compose up -d --build`。
+需要 Docker 和 Docker Compose v2 或更新版本。目前发布镜像支持 `linux/amd64`。
+完成 `.env` 配置后，在项目目录运行：
+
+```bash
+docker compose up -d --wait
+```
+
+默认 Compose 使用 `knighttools/codebuddy2api:latest`，每次 `up` 都检查并拉取最新镜像。
+更新时运行：
+
+```bash
+git pull origin main
+docker compose pull
+docker compose up -d --wait
+```
+
+`git pull` 更新仓库文件；镜像拉取和容器重建由 Compose 完成。
+`docker compose restart` 只重启原容器，不能用于更新版本。
+配置、请求数据库和两类凭证保存在宿主机挂载目录中，重建容器会保留这些数据。
+
+需要从当前源码构建时，叠加独立配置：
+
+```bash
+git pull origin main
+CODEBUDDY_REVISION="$(git rev-parse HEAD)" \
+  docker compose -f docker-compose.yml -f docker-compose.build.yml up -d --build --wait
+```
+
+此方式构建 `codebuddy2api:local`，包含前端构建，不会拉取发布镜像覆盖本地源码。
+后续更新继续使用同一组 `-f` 参数。修改前端后重新构建即可，无需手动复制静态文件。
+
+### 7. 一键源码部署到调试服务器
+
+仓库提供了 `Makefile` 和 `scripts/deploy_docker.sh`，可将当前代码打包上传到服务器，再叠加 `docker-compose.build.yml` 构建并启动服务。
 
 ```bash
 DEPLOY_HOST=192.168.100.3 \
@@ -189,10 +222,17 @@ curl -sS -X POST 'http://192.168.100.3:8001/codebuddy/v1/chat/completions' \
 - `POST /codebuddy/v1/credentials/delete`: （需要认证）删除指定凭证。
 - `GET /api/checkin`: （需要认证）查看自动签到计划及逐账号状态。
 - `POST /api/checkin/run`: （需要认证）立即检查并领取所有账号的待领签到奖励。
+- `GET /codebuddy/auth/start`: （需要认证）启动 CodeBuddy 授权。
+- `POST /codebuddy/auth/poll`: （需要认证）轮询 CodeBuddy 授权结果并保存凭证。
 - `GET /workbuddy/auth/start`: （需要认证）启动 WorkBuddy 签到授权。
 - `POST /workbuddy/auth/poll`: （需要认证）轮询 WorkBuddy 授权结果并保存凭证。
 - `GET /workbuddy/credentials`: （需要认证）列出已授权的 WorkBuddy 签到账号。
+- `DELETE /workbuddy/credentials/{filename}`: （需要认证）按文件名删除指定 WorkBuddy 凭证。
+- `POST /workbuddy/credentials/delete`: 旧接口仅支持 `{"filename":"...json"}`；仅传 `index` 返回 409，避免列表变化时删错账号。
+
 - `GET /health`: 服务的健康检查端点。
+
+两类产品的普通授权与重新授权轮询成功后只返回保存结果，不返回 access token、refresh token 或上游原始响应。保存失败返回 HTTP 500 和 `save_failed`；上游响应缺少 Token 返回 HTTP 502；等待授权返回 HTTP 400 和 `authorization_pending`。
 
 ## 🔧 项目结构
 

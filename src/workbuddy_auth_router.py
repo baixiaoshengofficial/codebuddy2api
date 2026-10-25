@@ -7,8 +7,7 @@ import uuid
 from typing import Any, Dict, Optional
 
 import httpx
-from fastapi import APIRouter, Body, Depends
-from fastapi.responses import JSONResponse
+from fastapi import APIRouter, Depends, HTTPException
 
 from config import (
     get_codebuddy_api_endpoint,
@@ -16,6 +15,8 @@ from config import (
     get_codebuddy_site,
 )
 from .auth import authenticate
+from .models import CredentialDeleteCommand
+from .authorization_router import create_authorization_router
 from .reauthorization_router import create_reauthorization_router
 from .credential_utils import build_credential_filename, decode_jwt_claims, first_claim, select_claims
 from .workbuddy_token_manager import workbuddy_token_manager
@@ -328,103 +329,55 @@ async def save_workbuddy_token(token_data: Dict[str, Any]) -> bool:
         return False
 
 
-@router.get("/auth/start", summary="Start WorkBuddy authentication for check-in")
-async def start_device_auth(_token: str = Depends(authenticate)):
-    result = await start_workbuddy_auth()
-    if not result.get("success"):
-        return JSONResponse(content=result, status_code=400)
-    return result
-
-
-@router.post("/auth/poll", summary="Poll WorkBuddy OAuth token")
-async def poll_for_token(
-    auth_state: str = Body(None, embed=True),
-    _token: str = Depends(authenticate),
-):
-    if not auth_state:
-        return JSONResponse(
-            content={"error": "missing_parameters", "error_description": "缺少必要的参数：auth_state"},
-            status_code=400,
-        )
-
-    poll_result = await poll_workbuddy_auth_status(auth_state)
-    if poll_result.get("status") == "success":
-        token_data = poll_result.get("token_data") or {}
-        bearer_token = token_data.get("access_token") or token_data.get("bearer_token")
-        if not bearer_token:
-            return JSONResponse(
-                content={
-                    "error": "invalid_token_response",
-                    "error_description": "API 返回的响应中没有找到 token",
-                },
-                status_code=400,
-            )
-        saved = await save_workbuddy_token(token_data)
-        if not saved:
-            return JSONResponse(
-                content={
-                    "error": "save_failed",
-                    "error_description": "Token 获取成功，但写入 WorkBuddy 凭证目录失败",
-                    "access_token": bearer_token,
-                    "saved": False,
-                },
-                status_code=500,
-            )
-        return {
-            "access_token": bearer_token,
-            "token_type": token_data.get("token_type", "Bearer"),
-            "expires_in": token_data.get("expires_in"),
-            "refresh_token": token_data.get("refresh_token"),
-            "scope": token_data.get("scope"),
-            "saved": saved,
-            "message": "WorkBuddy 授权成功",
-            "domain": token_data.get("domain"),
-            "user_id": token_data.get("account_uid"),
-        }
-    if poll_result.get("status") == "pending":
-        return JSONResponse(
-            content={
-                "error": "authorization_pending",
-                "error_description": poll_result.get("message", "等待用户登录..."),
-                "code": poll_result.get("code"),
-            },
-            status_code=400,
-        )
-    return JSONResponse(
-        content={
-            "error": "auth_error",
-            "error_description": poll_result.get("message", "认证过程发生错误"),
-            "details": poll_result,
-        },
-        status_code=400,
-    )
-
-
 @router.get("/credentials", summary="List WorkBuddy check-in credentials")
 async def list_credentials(_token: str = Depends(authenticate)):
     workbuddy_token_manager.load_all_tokens()
     return {"credentials": workbuddy_token_manager.get_credentials_info()}
 
 
-@router.post("/credentials/delete", summary="Delete a WorkBuddy credential by index")
-async def delete_credential(
-    index: int = Body(..., embed=True),
-    _token: str = Depends(authenticate),
-):
-    success = workbuddy_token_manager.delete_credential_by_index(index)
-    if not success:
-        return JSONResponse(
-            content={"success": False, "message": "删除失败，索引无效或文件不存在"},
-            status_code=400,
-        )
+def _delete_credential(filename):
+    try:
+        workbuddy_token_manager.delete_credential(filename)
+    except FileNotFoundError:
+        raise HTTPException(404, "凭证不存在，请刷新列表")
+    except OSError:
+        logger.exception("Unable to delete WorkBuddy credential")
+        raise HTTPException(500, "删除凭证失败，请稍后重试")
     return {"success": True, "message": "已删除 WorkBuddy 凭证"}
+
+
+@router.delete(
+    "/credentials/{filename}", summary="Delete a WorkBuddy credential by filename"
+)
+async def delete_credential(filename: str, _token: str = Depends(authenticate)):
+    return _delete_credential(filename)
+
+
+@router.post("/credentials/delete", deprecated=True)
+async def delete_credential_legacy(
+    command: CredentialDeleteCommand, _token: str = Depends(authenticate)
+):
+    if not command.filename:
+        raise HTTPException(409, "按序号删除已停用，请刷新页面后按具体凭证删除")
+    return _delete_credential(command.filename)
+
+
+router.include_router(
+    create_authorization_router(
+        lambda: start_workbuddy_auth(),
+        lambda state: poll_workbuddy_auth_status(state),
+        lambda token: save_workbuddy_token(token),
+    )
+)
 
 
 # Targeted renewal uses the same provider login and token normalization.
 
-router.include_router(create_reauthorization_router(
-    lambda: workbuddy_token_manager,
-    lambda: start_workbuddy_auth(),
-    lambda state: poll_workbuddy_auth_status(state),
-    build_workbuddy_credential,
-))
+router.include_router(
+    create_reauthorization_router(
+        lambda: workbuddy_token_manager,
+        lambda: start_workbuddy_auth(),
+        lambda state: poll_workbuddy_auth_status(state),
+        build_workbuddy_credential,
+    )
+)
