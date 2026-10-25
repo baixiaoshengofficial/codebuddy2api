@@ -16,6 +16,7 @@ from config import (
     get_codebuddy_site,
 )
 from .auth import authenticate
+from .reauthorization_router import create_reauthorization_router
 from .credential_utils import build_credential_filename, decode_jwt_claims, first_claim, select_claims
 from .workbuddy_token_manager import workbuddy_token_manager
 
@@ -277,38 +278,50 @@ async def poll_workbuddy_auth_status(auth_state: str) -> Dict[str, Any]:
         return {"status": "error", "message": f"轮询失败: {exc}"}
 
 
+def build_workbuddy_credential(token_data: Dict[str, Any]) -> Dict[str, Any]:
+    """Normalize an upstream login independently from persistence."""
+    bearer_token = token_data.get("access_token") or token_data.get("bearer_token")
+    decoded = _decode_jwt_user(bearer_token or "")
+    user_id = (
+        token_data.get("account_uid")
+        or decoded["user_id"]
+        or token_data.get("domain")
+        or "unknown"
+    )
+    user_info = dict(decoded.get("user_info") or {})
+    if token_data.get("account_uid"):
+        user_info["uid"] = token_data["account_uid"]
+    if token_data.get("phone"):
+        user_info["phone"] = token_data["phone"]
+    if token_data.get("account_name"):
+        user_info["name"] = token_data["account_name"]
+    if token_data.get("account_email"):
+        user_info["email"] = token_data["account_email"]
+
+    credential_data = {
+        "bearer_token": bearer_token,
+        "user_id": user_id,
+        "created_at": int(time.time()),
+        "expires_in": token_data.get("expires_in"),
+        "refresh_token": token_data.get("refresh_token"),
+        "token_type": token_data.get("token_type", "Bearer"),
+        "scope": token_data.get("scope"),
+        "domain": token_data.get("domain"),
+        "phone": token_data.get("phone"),
+        "product": "WorkBuddy",
+        "user_info": user_info or None,
+    }
+    credential_data = {
+        key: value for key, value in credential_data.items() if value is not None
+    }
+    return credential_data
+
+
 async def save_workbuddy_token(token_data: Dict[str, Any]) -> bool:
     try:
-        bearer_token = token_data.get("access_token") or token_data.get("bearer_token")
-        decoded = _decode_jwt_user(bearer_token or "")
-        user_id = token_data.get("account_uid") or decoded["user_id"] or token_data.get("domain") or "unknown"
-        user_info = dict(decoded.get("user_info") or {})
-        if token_data.get("account_uid"):
-            user_info["uid"] = token_data["account_uid"]
-        if token_data.get("phone"):
-            user_info["phone"] = token_data["phone"]
-        if token_data.get("account_name"):
-            user_info["name"] = token_data["account_name"]
-        if token_data.get("account_email"):
-            user_info["email"] = token_data["account_email"]
-
-        credential_data = {
-            "bearer_token": bearer_token,
-            "user_id": user_id,
-            "created_at": int(time.time()),
-            "expires_in": token_data.get("expires_in"),
-            "refresh_token": token_data.get("refresh_token"),
-            "token_type": token_data.get("token_type", "Bearer"),
-            "scope": token_data.get("scope"),
-            "domain": token_data.get("domain"),
-            "phone": token_data.get("phone"),
-            "product": "WorkBuddy",
-            "user_info": user_info or None,
-        }
-        credential_data = {key: value for key, value in credential_data.items() if value is not None}
-
+        credential_data = build_workbuddy_credential(token_data)
         timestamp = int(time.time())
-        filename = build_credential_filename("workbuddy", user_id, timestamp)
+        filename = build_credential_filename("workbuddy", credential_data["user_id"], timestamp)
         return workbuddy_token_manager.add_credential_with_data(credential_data, filename=filename)
     except Exception as exc:
         logger.error("Failed to save WorkBuddy token: %s", exc)
@@ -405,3 +418,13 @@ async def delete_credential(
             status_code=400,
         )
     return {"success": True, "message": "已删除 WorkBuddy 凭证"}
+
+
+# Targeted renewal uses the same provider login and token normalization.
+
+router.include_router(create_reauthorization_router(
+    lambda: workbuddy_token_manager,
+    lambda: start_workbuddy_auth(),
+    lambda state: poll_workbuddy_auth_status(state),
+    build_workbuddy_credential,
+))

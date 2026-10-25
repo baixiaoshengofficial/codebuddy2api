@@ -102,17 +102,28 @@ async function remove(row) {
       <div>
         <StatusBadge
           :state="
-            ['claimed', 'already_checked_in'].includes(row.checkin.status)
-              ? 'success'
-              : row.checkin.status || 'pending'
+            row.is_expired
+              ? 'expired'
+              : ['claimed', 'already_checked_in'].includes(row.checkin.status)
+                ? 'success'
+                : row.checkin.status || 'pending'
           "
-          :label="labels[row.checkin.status] || '等待检查'"
+          :label="
+            row.is_expired ? '已过期' : labels[row.checkin.status] || '等待检查'
+          "
         /><small>{{
           row.checkin.checked_at
             ? dateTime(row.checkin.checked_at * 1000)
             : "尚未执行"
         }}</small>
       </div>
+      <AuthorizationPanel
+        v-if="row.is_expired || row.checkin.status === 'expired'"
+        product="workbuddy"
+        :credential="row"
+        :disabled="busy"
+        @saved="refresh"
+      />
       <button
         class="icon-button danger"
         :disabled="busy"

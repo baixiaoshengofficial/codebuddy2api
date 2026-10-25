@@ -1,7 +1,11 @@
 <script setup>
 import { nextTick, onBeforeUnmount, onMounted, ref, useId } from "vue";
 import { X } from "@lucide/vue";
-defineProps({ title: String, subtitle: String });
+defineProps({
+  title: String,
+  subtitle: String,
+  eyebrow: { type: String, default: "诊断详情" },
+});
 const emit = defineEmits(["close"]);
 const panel = ref(null),
   titleId = useId();
@@ -54,7 +58,7 @@ onBeforeUnmount(() => {
       >
         <header>
           <div>
-            <p class="eyebrow">诊断详情</p>
+            <p class="eyebrow">{{ eyebrow }}</p>
             <h2 :id="titleId">{{ title }}</h2>
             <small>{{ subtitle }}</small>
           </div>

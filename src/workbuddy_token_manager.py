@@ -159,7 +159,15 @@ class WorkBuddyTokenManager:
             logger.error("Failed to save WorkBuddy credential: %s", exc)
             return False
 
-    def update_credential(self, filename: str, updates: Dict[str, Any]) -> Dict[str, Any]:
+    def replace_credential(self, filename: str, credential_data: Dict[str, Any]) -> None:
+        from .credential_utils import obsolete_authorization_fields
+
+        self.update_credential(
+            filename, credential_data,
+            remove_keys=obsolete_authorization_fields(credential_data),
+        )
+
+    def update_credential(self, filename: str, updates: Dict[str, Any], remove_keys=()) -> Dict[str, Any]:
         """Atomically persist refreshed tokens without changing the account file."""
         if os.path.basename(filename) != filename:
             raise ValueError("Invalid WorkBuddy credential filename")
@@ -167,6 +175,8 @@ class WorkBuddyTokenManager:
         with open(file_path, "r", encoding="utf-8") as handle:
             data = json.load(handle)
         data.update(updates)
+        for key in remove_keys:
+            data.pop(key, None)
         temporary = f"{file_path}.tmp"
         try:
             with open(temporary, "w", encoding="utf-8") as handle:

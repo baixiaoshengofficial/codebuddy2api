@@ -2,9 +2,10 @@
 import { onBeforeUnmount, onMounted, ref } from "vue";
 import { KeyRound, LockKeyhole, Trash2, ShieldCheck } from "@lucide/vue";
 import StatusBadge from "../StatusBadge.vue";
+import AuthorizationPanel from "./AuthorizationPanel.vue";
 import { credentialLabel, dateTime } from "../../lib/format";
 const props = defineProps({ rows: Array, busy: Boolean, serverTime: Number });
-defineEmits(["lock", "delete", "test"]);
+defineEmits(["lock", "delete", "test", "saved"]);
 const now = ref(Date.now());
 let timer,
   offset = 0;
@@ -78,6 +79,16 @@ function cooldown(row) {
           </td>
           <td data-label="操作">
             <div class="row-actions">
+              <AuthorizationPanel
+                v-if="
+                  row.is_expired ||
+                  ['expired', 'reauthorize'].includes(row.state)
+                "
+                product="codebuddy"
+                :credential="row"
+                :disabled="busy"
+                @saved="$emit('saved')"
+              />
               <button
                 class="icon-button compact"
                 :disabled="

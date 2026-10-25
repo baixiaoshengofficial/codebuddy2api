@@ -495,6 +495,20 @@ class CodeBuddyTokenManager:
             logger.error(f"Failed to save credential: {e}")
             return False
 
+    def replace_credential(self, filename: str, credential_data: Dict[str, Any]) -> None:
+        """Replace a login in place, preserving selection and removing stale state."""
+        from .credential_utils import obsolete_authorization_fields
+
+        self.update_credential(
+            filename, credential_data,
+            remove_keys=obsolete_authorization_fields(credential_data),
+        )
+        for index, credential in enumerate(self.credentials):
+            if os.path.basename(credential['file_path']) == filename:
+                self.cooldowns.pop(index, None)
+                break
+        self.save_state()
+
     def update_credential(
         self,
         filename: str,

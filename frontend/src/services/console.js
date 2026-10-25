@@ -23,10 +23,15 @@ export const consoleApi = {
   runCheckin: () => apiFetch("/api/checkin/run", { method: "POST" }),
   deleteWorkbuddy: (index) =>
     apiFetch("/workbuddy/credentials/delete", json("POST", { index })),
-  startAuthorization: (product, signal) =>
-    apiFetch(`/${product}/auth/start`, { signal }),
-  pollAuthorization: (product, authState, signal) =>
-    apiFetch(`/${product}/auth/poll`, {
+  startAuthorization: (product, signal, filename) =>
+    filename
+      ? apiFetch(`/${product}/auth/reauthorize`, {
+          ...json("POST", { filename }),
+          signal,
+        })
+      : apiFetch(`/${product}/auth/start`, { signal }),
+  pollAuthorization: (product, authState, signal, filename) =>
+    apiFetch(`/${product}/auth/${filename ? "reauthorize/poll" : "poll"}`, {
       ...json("POST", { auth_state: authState }),
       signal,
     }),

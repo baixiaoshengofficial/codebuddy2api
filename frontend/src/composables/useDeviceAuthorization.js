@@ -17,7 +17,7 @@ export function useDeviceAuthorization(product, onSaved) {
     pending.value = false;
     url.value = "";
   }
-  async function start() {
+  async function start(filename = null) {
     cancel();
     const current = generation;
     controller = new AbortController();
@@ -25,7 +25,11 @@ export function useDeviceAuthorization(product, onSaved) {
     pending.value = true;
     error.value = "";
     try {
-      const result = await consoleApi.startAuthorization(product, signal);
+      const result = await consoleApi.startAuthorization(
+        product,
+        signal,
+        filename,
+      );
       if (current !== generation) return;
       if (!result.auth_state || !result.verification_uri_complete)
         throw new Error("未返回完整的授权链接");
@@ -41,13 +45,16 @@ export function useDeviceAuthorization(product, onSaved) {
             product,
             result.auth_state,
             signal,
+            filename,
           );
           if (current !== generation) return;
           if (value.access_token || value.saved) {
-            if (product === "workbuddy" && !value.saved)
-              throw new Error("授权成功，但服务器保存凭证失败");
+            if (!value.saved) throw new Error("授权成功，但服务器保存凭证失败");
             cancel();
-            notify("授权成功，凭证已保存", "success");
+            notify(
+              filename ? "重新授权成功，已更新原凭证" : "授权成功，凭证已保存",
+              "success",
+            );
             await onSaved();
             return;
           }

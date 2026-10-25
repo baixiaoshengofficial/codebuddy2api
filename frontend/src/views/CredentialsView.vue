@@ -131,6 +131,7 @@ function remove(row) {
             @lock="mode('manual', $event.filename)"
             @delete="remove"
             @test="testing = $event"
+            @saved="refresh"
           />
         </section>
         <RoutingTimeline

@@ -13,6 +13,15 @@ from typing import Any, Dict, Iterable, Optional
 PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 
 
+def obsolete_authorization_fields(credential):
+    """Discard old session metadata omitted by a new provider login."""
+    return tuple(key for key in (
+        "session_dead_at", "session_dead_reason", "last_refresh_at",
+        "refresh_token", "expires_in", "session_state", "scope", "domain",
+        "phone", "full_response",
+    ) if key not in credential)
+
+
 def resolve_project_path(path: str) -> str:
     """Resolve a relative path from the project root."""
     return path if os.path.isabs(path) else os.path.join(PROJECT_ROOT, path)

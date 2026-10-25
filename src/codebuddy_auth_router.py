@@ -18,6 +18,8 @@ from config import (
 import logging
 
 from .auth import authenticate
+from .reauthorization_router import create_reauthorization_router
+from .codebuddy_token_manager import codebuddy_token_manager
 from .credential_utils import build_credential_filename, decode_jwt_claims, first_claim, select_claims
 
 logger = logging.getLogger(__name__)
@@ -223,47 +225,56 @@ async def poll_codebuddy_auth_status(auth_state: str) -> Dict[str, Any]:
             "message": f"轮询失败: {str(e)}"
         }
 
+def build_codebuddy_credential(token_data: Dict[str, Any]) -> Dict[str, Any]:
+    """Normalize an upstream login independently from persistence."""
+    # Parse display metadata only; token verification remains upstream's job.
+    bearer_token = token_data.get("access_token") or token_data.get("bearer_token")
+    claims = decode_jwt_claims(bearer_token or "")
+    user_id = first_claim(claims, ("email", "preferred_username", "sub"))
+    user_id = user_id or token_data.get("domain") or "unknown"
+    user_info = select_claims(
+        claims,
+        (
+            "sub",
+            "email",
+            "preferred_username",
+            "name",
+            "given_name",
+            "family_name",
+            "exp",
+            "iat",
+            "scope",
+        ),
+    )
+    if claims.get("sid") is not None:
+        user_info["session_state"] = claims["sid"]
+
+    # 构建完整的凭证数据
+    credential_data = {
+        "bearer_token": bearer_token,
+        "user_id": user_id,
+        "created_at": int(time.time()),
+        "expires_in": token_data.get("expires_in"),
+        "refresh_token": token_data.get("refresh_token"),
+        "token_type": token_data.get("token_type", "Bearer"),
+        "scope": token_data.get("scope"),
+        "domain": token_data.get("domain"),
+        "session_state": token_data.get("session_state"),
+        "user_info": user_info,
+        "full_response": token_data,  # 保存完整的原始响应
+    }
+
+    # 移除None值，保持文件整洁
+    credential_data = {k: v for k, v in credential_data.items() if v is not None}
+    return credential_data
+
+
 async def save_codebuddy_token(token_data: Dict[str, Any]) -> bool:
-    """保存CodeBuddy token到文件"""
     try:
         from .codebuddy_token_manager import codebuddy_token_manager
-        
-        # 添加创建时间
-        token_data["created_at"] = int(time.time())
-        
-        # Parse display metadata only; token verification remains upstream's job.
-        bearer_token = token_data.get("access_token") or token_data.get("bearer_token")
-        claims = decode_jwt_claims(bearer_token or "")
-        user_id = first_claim(claims, ("email", "preferred_username", "sub"))
-        user_id = user_id or token_data.get("domain") or "unknown"
-        user_info = select_claims(
-            claims,
-            ("sub", "email", "preferred_username", "name", "given_name", "family_name", "exp", "iat", "scope"),
-        )
-        if claims.get("sid") is not None:
-            user_info["session_state"] = claims["sid"]
-        
-        # 构建完整的凭证数据
-        credential_data = {
-            "bearer_token": bearer_token,
-            "user_id": user_id,
-            "created_at": int(time.time()),
-            "expires_in": token_data.get('expires_in'),
-            "refresh_token": token_data.get('refresh_token'),
-            "token_type": token_data.get('token_type', 'Bearer'),
-            "scope": token_data.get('scope'),
-            "domain": token_data.get('domain'),
-            "session_state": token_data.get('session_state'),
-            "user_info": user_info,
-            "full_response": token_data  # 保存完整的原始响应
-        }
-        
-        # 移除None值，保持文件整洁
-        credential_data = {k: v for k, v in credential_data.items() if v is not None}
-        
-        # 生成更友好的文件名
+        credential_data = build_codebuddy_credential(token_data)
         timestamp = int(time.time())
-        filename = build_credential_filename("codebuddy", user_id, timestamp)
+        filename = build_credential_filename("codebuddy", credential_data["user_id"], timestamp)
         
         # 使用token管理器保存
         success = codebuddy_token_manager.add_credential_with_data(
@@ -272,7 +283,7 @@ async def save_codebuddy_token(token_data: Dict[str, Any]) -> bool:
         )
         
         if success:
-            logger.info(f"成功保存CodeBuddy token，用户: {user_id}，文件: {filename}")
+            logger.info(f"成功保存CodeBuddy token，用户: {credential_data['user_id']}，文件: {filename}")
         
         return success
         
@@ -381,3 +392,13 @@ async def oauth_callback(code: str = None, state: str = None, error: str = None)
             "state": state
         }
     )
+
+
+# Targeted renewal uses the same provider login and token normalization.
+
+router.include_router(create_reauthorization_router(
+    lambda: codebuddy_token_manager,
+    lambda: start_codebuddy_auth(),
+    lambda state: poll_codebuddy_auth_status(state),
+    build_codebuddy_credential,
+))

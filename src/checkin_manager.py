@@ -625,6 +625,11 @@ class CodeBuddyCheckinManager:
         accounts = []
         for record in records:
             result = stored.get(record["filename"])
+            if (result and result.get("status") == "expired"
+                    and record["data"].get("created_at", 0) > (result.get("checked_at") or 0)
+                    and not self.token_manager.is_token_expired(record["data"])):
+                # The old login's failure must not label a newly authorized login.
+                result = None
             if result:
                 accounts.append(dict(result))
             else:
