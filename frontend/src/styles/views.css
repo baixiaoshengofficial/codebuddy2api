@@ -566,9 +566,11 @@ meter::-moz-meter-bar {
     padding-inline: 4px;
     font-size: 12px;
   }
-  .request-filter-selects,
-  .request-range {
+  .request-filter-selects {
     grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .request-range {
+    grid-template-columns: minmax(0, 1fr);
   }
   .reset-filters,
   .request-range > button {
