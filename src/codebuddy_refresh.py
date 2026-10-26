@@ -10,6 +10,7 @@ import httpx
 from config import get_codebuddy_api_endpoint
 from .codebuddy_token_manager import codebuddy_token_manager
 from .credential_utils import decode_jwt_claims
+from .credential_store import CredentialNotFound
 
 
 logger = logging.getLogger(__name__)
@@ -40,10 +41,10 @@ class CodeBuddyCredentialRefresher:
         return httpx.AsyncClient(timeout=httpx.Timeout(10.0, connect=6.0))
 
     def _current(self, filename: str) -> Dict[str, Any]:
-        for item in self.manager.credentials:
-            if item["file_path"].endswith("/" + filename):
-                return item["data"]
-        raise SessionExpiredError("CodeBuddy credential was removed")
+        try:
+            return self.manager.get_credential(filename)
+        except CredentialNotFound:
+            raise SessionExpiredError("CodeBuddy credential was removed")
 
     async def ensure_fresh(self, selected: Dict[str, Any]) -> Dict[str, Any]:
         filename = selected["_credential_filename"]
@@ -147,8 +148,8 @@ class CodeBuddyCredentialRefresher:
             while True:
                 await asyncio.sleep(delay)
                 delay = 3600
-                for item in list(self.manager.credentials):
-                    filename = item["file_path"].rsplit("/", 1)[-1]
+                for item in self.manager.get_credential_records():
+                    filename = item["filename"]
                     try:
                         await self.ensure_fresh({
                             **item["data"], "_credential_filename": filename

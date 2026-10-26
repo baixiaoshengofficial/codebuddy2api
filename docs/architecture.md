@@ -10,10 +10,13 @@
 | --- | --- | --- |
 | 应用装配 | `web.py` | 创建 FastAPI、注册路由、协调启动与关闭生命周期。 |
 | 服务认证 | `src/auth.py` | 校验管理端与受保护 API 的服务密码。所有受保护路由复用此依赖。 |
-| CodeBuddy API | `src/codebuddy_router.py`、`src/chat/`、`src/codebuddy_api_client.py`、`src/codebuddy_model_manager.py` | OpenAI 兼容协议转换、上游调用与模型发现。 |
-| CodeBuddy 凭证 | `src/codebuddy_token_manager.py` | CodeBuddy 凭证存储、过期判断、手动选择与积分不足时自动切换。 |
-| WorkBuddy 签到 | `src/workbuddy_token_manager.py`、`src/checkin_manager.py` | WorkBuddy 凭证存储和每日签到业务；不参与模型请求切换。 |
-| 授权流程 | `src/codebuddy_auth_router.py`、`src/workbuddy_auth_router.py` | 分别处理两个产品的上游授权协议，并把获得的 token 交给对应管理器。 |
+| CodeBuddy API | `src/codebuddy_router.py`、`src/chat/`、`src/codebuddy_model_manager.py` | OpenAI 兼容协议转换、上游调用与模型发现；请求头集中在 `chat/headers.py`。 |
+| CodeBuddy 凭证 | `src/codebuddy_token_manager.py` | 过期判断、手动选择、冷却状态和积分不足时自动切换。 |
+| WorkBuddy 签到 | `src/workbuddy_token_manager.py`、`src/checkin_manager.py` | 签到账号规则与每日签到；不参与模型请求切换。 |
+| 授权 HTTP 入口 | `src/codebuddy_auth_router.py`、`src/workbuddy_auth_router.py` | 组装登录服务、凭证保存与重新授权，处理各产品的管理命令。 |
+| 上游授权 | `src/oauth/client.py`、`src/oauth/account.py` | 共用设备授权协议，通过产品配置保留平台、请求头和轮询参数差异；WorkBuddy 账号查询作为独立适配器注入。 |
+| 凭证转换与保存 | `src/credential_login.py` | 将登录数据转换为对应产品的凭证字段，通过写入接口交给管理器。 |
+| 凭证持久化 | `src/credential_store.py` | 存储接口与 JSON 实现；读取、原子写入、更新和删除文件。 |
 | 共享凭证工具 | `src/credential_utils.py` | 相对路径解析、JWT 显示信息解析、凭证文件命名；不依赖 FastAPI 或具体产品。 |
 | 审计与设置 | `src/request_log_manager.py`、`src/settings_router.py`、`config.py` | 请求审计、运行时可修改设置和启动配置。 |
 
@@ -28,7 +31,7 @@
 ## 本地验证
 
 ```bash
-venv/bin/python -m unittest discover -s tests -v
+venv/bin/python -m pytest -q
 venv/bin/python -m compileall -q src web.py config.py
 
 cd frontend
@@ -46,7 +49,19 @@ curl -fsS http://127.0.0.1:8001/health
 
 ## 后续重构准则
 
-`src/codebuddy_router.py` 是协议适配层中最大的模块。后续应按“流式转换、非流式聚合、请求审计、Responses 适配、凭证管理端点”拆分为内部模块，并为每一块先补回归测试；不要在同一提交中同时改写协议行为和目录结构。
+`src/chat/` 已负责流式转换、非流式聚合、请求准备和上游执行。`src/codebuddy_router.py` 中的 Responses 适配、请求审计和旧凭证端点仍可分步拆分，每一步先补接口回归，再移动职责。
+
+### 授权与存储依赖
+
+- 两类授权路由复用 `OAuthLoginClient`。产品配置提供平台、User-Agent、有效期及轮询间隔，WorkBuddy 的账号元数据查询通过回调注入；HTTP 协议实现不读写凭证文件。
+- `CredentialLogin` 负责字段转换与保存编排，依赖 `CredentialWriter`。新授权不再保存重复 Token 的完整上游响应。
+- 两个凭证管理器通过 `CredentialStore` 读写数据，默认使用 `JsonCredentialStore`，测试可以注入内存存储。文件名、现有 JSON 凭证字段、排序和手动选择保持兼容。
+- 文件读取不创建目录或改写数据；首次写入才创建目录。新增、续期和路由状态保存都通过私有临时文件与 `os.replace` 完成，写入失败时保留原文件并清理临时文件。
+- 重新授权依赖 `CredentialReplacer` 的读取、替换方法；续期使用公开的凭证读取和记录列表，不再遍历管理器内部数组。
+- 重复授权会话只重新获取一次；仍重复时返回失败，避免复用另一条目的登录会话。同一产品的并发启动串行处理。
+- 删除了没有调用方的旧消息转换器、旧凭证添加方法、未使用的 Pydantic 模型、被前端路由遮蔽的重复根路由，以及模型缓存中的不可达分支。
+
+测试覆盖模拟 OAuth HTTP、真实管理路由到 JSON 存储的授权与重新授权链路、存储替换、原子写入失败、导入无运行数据写入副作用和模型缓存回退，不使用真实账号。
 
 ## 管理端第二版
 
@@ -119,7 +134,7 @@ CodeBuddy 已过期或需要重新授权的条目、WorkBuddy 已过期或签到
 
 ### 授权结果与删除命令
 
-`device_authorization.py` 编排普通登录与保存，`authorization_router.py` 统一 HTTP 结果，两个产品路由负责上游调用、Token 标准化和存储适配。普通登录和重新授权共用公开启动字段白名单及错误适配；成功轮询返回 `saved: true`，不返回 Token、refresh token 或上游原始响应。等待授权为 400 / `authorization_pending`，凭证缺失为 502 / `invalid_token_response`，保存失败为 500 / `save_failed`。普通添加流程匹配已有账号时，也调用管理器的 `replace_credential` 清除旧会话字段。
+`device_authorization.py` 编排普通登录与保存，`authorization_router.py` 统一 HTTP 结果，两个产品路由注入 `oauth/` 的协议适配器和 `credential_login.py` 的凭证转换、保存服务。普通登录和重新授权共用公开启动字段白名单及错误适配；成功轮询返回 `saved: true`，不返回 Token、refresh token 或上游原始响应。等待授权为 400 / `authorization_pending`，凭证缺失为 502 / `invalid_token_response`，保存失败为 500 / `save_failed`。普通添加流程匹配已有账号时，也调用管理器的 `replace_credential` 清除旧会话字段。
 
 WorkBuddy 删除使用 `DELETE /workbuddy/credentials/{filename}`，管理器核对实际条目后仅删除该文件。列表重排不改变目标，目标已被删除时返回 404，不删除其他条目。旧 `POST /workbuddy/credentials/delete` 只接受文件名，旧页面仅传序号时返回 409 并提示刷新。内部兼容方法 `delete_credential_by_index` 不作为 HTTP 定位依据。
 

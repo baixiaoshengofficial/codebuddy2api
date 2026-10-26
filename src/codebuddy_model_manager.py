@@ -73,22 +73,8 @@ class CodeBuddyModelManager:
                     task = asyncio.create_task(self.get_models(force_refresh=True))
                     self._refresh_tasks[site] = task
             return cached["models"]
-        if (
-            cached
-            and not force_refresh
-            and time.time() - cached["fetched_at"] < MODEL_CACHE_TTL_SECONDS
-        ):
-            return cached["models"]
-
         async with self._lock:
             cached = self._cache.get(site)
-            if (
-                cached
-                and not force_refresh
-                and time.time() - cached["fetched_at"] < MODEL_CACHE_TTL_SECONDS
-            ):
-                return cached["models"]
-
             try:
                 models = await self._fetch_models_for_site(site)
             except Exception:

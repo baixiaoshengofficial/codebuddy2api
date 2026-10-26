@@ -1,13 +1,12 @@
 """WorkBuddy credential storage for daily check-in only."""
 
-import glob
-import json
 import logging
 import os
 import time
 from typing import Any, Dict, List, Optional
 
-from .credential_utils import build_credential_filename, resolve_project_path
+from .credential_utils import build_credential_filename
+from .credential_store import CredentialNotFound, CredentialStore, JsonCredentialStore
 
 logger = logging.getLogger(__name__)
 
@@ -15,38 +14,19 @@ logger = logging.getLogger(__name__)
 class WorkBuddyTokenManager:
     """Manage WorkBuddy login tokens used exclusively for check-in."""
 
-    def __init__(self, creds_dir: Optional[str] = None):
-        if creds_dir is None:
+    def __init__(self, creds_dir: Optional[str] = None, store: CredentialStore = None):
+        if store is None and creds_dir is None:
             from config import get_workbuddy_creds_dir
             creds_dir = get_workbuddy_creds_dir()
-        self.creds_dir = resolve_project_path(creds_dir)
+        self.store = store if store is not None else JsonCredentialStore(creds_dir)
+        self.creds_dir = self.store.directory
         self.credentials: List[Dict[str, Any]] = []
         self.load_all_tokens()
 
     def load_all_tokens(self) -> None:
-        self.credentials = []
-        logger.info("Loading WorkBuddy credentials from: %s", self.creds_dir)
-        if not os.path.exists(self.creds_dir):
-            os.makedirs(self.creds_dir)
-            logger.warning("WorkBuddy credentials directory created at %s", self.creds_dir)
-            return
-
-        for file_path in sorted(glob.glob(os.path.join(self.creds_dir, "*.json"))):
-            basename = os.path.basename(file_path)
-            if basename == "manager_state.json":
-                continue
-            try:
-                with open(file_path, "r", encoding="utf-8") as handle:
-                    data = json.load(handle)
-                if "bearer_token" not in data:
-                    logger.warning("Skipping invalid WorkBuddy credential (missing bearer_token): %s", basename)
-                    continue
-                data.setdefault("product", "WorkBuddy")
-                self.credentials.append({"file_path": file_path, "data": data})
-                logger.info("Loaded WorkBuddy credential: %s", basename)
-            except Exception as exc:
-                logger.error("Failed to load WorkBuddy credential %s: %s", basename, exc)
-        logger.info("Loaded %s WorkBuddy credentials", len(self.credentials))
+        self.credentials = self.store.records()
+        for credential in self.credentials:
+            credential["data"].setdefault("product", "WorkBuddy")
 
     @staticmethod
     def is_token_expired(credential_data: Dict[str, Any]) -> bool:
@@ -74,6 +54,12 @@ class WorkBuddyTokenManager:
         if preferred_username:
             return str(preferred_username)
         return None
+
+    def get_credential(self, filename: str) -> Dict[str, Any]:
+        for credential in self.credentials:
+            if os.path.basename(credential["file_path"]) == filename:
+                return dict(credential["data"])
+        raise CredentialNotFound(filename)
 
     def get_credential_records(self) -> List[Dict[str, Any]]:
         return [
@@ -147,12 +133,8 @@ class WorkBuddyTokenManager:
         if not filename.endswith(".json"):
             filename += ".json"
 
-        file_path = os.path.join(self.creds_dir, filename)
         try:
-            os.makedirs(self.creds_dir, exist_ok=True)
-            with open(file_path, "w", encoding="utf-8") as handle:
-                json.dump(credential_data, handle, indent=4, ensure_ascii=False)
-            logger.info("Added WorkBuddy credential: %s", filename)
+            self.store.write(filename, credential_data)
             self.load_all_tokens()
             return True
         except Exception as exc:
@@ -169,23 +151,7 @@ class WorkBuddyTokenManager:
 
     def update_credential(self, filename: str, updates: Dict[str, Any], remove_keys=()) -> Dict[str, Any]:
         """Atomically persist refreshed tokens without changing the account file."""
-        if os.path.basename(filename) != filename:
-            raise ValueError("Invalid WorkBuddy credential filename")
-        file_path = os.path.join(self.creds_dir, filename)
-        with open(file_path, "r", encoding="utf-8") as handle:
-            data = json.load(handle)
-        data.update(updates)
-        for key in remove_keys:
-            data.pop(key, None)
-        temporary = f"{file_path}.tmp"
-        try:
-            with open(temporary, "w", encoding="utf-8") as handle:
-                json.dump(data, handle, indent=4, ensure_ascii=False)
-            os.chmod(temporary, 0o600)
-            os.replace(temporary, file_path)
-        finally:
-            if os.path.exists(temporary):
-                os.remove(temporary)
+        data = self.store.update(filename, updates, remove_keys)
         self.load_all_tokens()
         return data
 
@@ -201,7 +167,7 @@ class WorkBuddyTokenManager:
         )
         if selected is None:
             raise FileNotFoundError("WorkBuddy credential not found")
-        os.remove(selected["file_path"])
+        self.store.delete(filename)
         self.load_all_tokens()
 
     def delete_credential_by_index(self, index: int) -> bool:

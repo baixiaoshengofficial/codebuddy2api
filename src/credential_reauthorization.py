@@ -1,9 +1,11 @@
 """Bind a fresh provider login to an existing credential, without adding accounts."""
 
 import asyncio
-import os
 import time
 from dataclasses import dataclass, field
+from typing import Callable
+
+from .credential_store import CredentialNotFound, CredentialReplacer
 
 from .credential_utils import decode_jwt_claims
 from .device_authorization import AuthorizationError, public_authorization_start
@@ -50,7 +52,7 @@ class AuthorizationSession:
 class CredentialReauthorization:
     def __init__(
         self,
-        get_manager,
+        get_manager: Callable[[], CredentialReplacer],
         start_login,
         poll_login,
         build_credential,
@@ -64,12 +66,10 @@ class CredentialReauthorization:
         self.sessions = {}
 
     def _credential(self, filename):
-        if not filename or os.path.basename(filename) != filename:
-            raise ReauthorizationError(404, "凭证不存在，请刷新列表")
-        for item in self.get_manager().credentials:
-            if os.path.basename(item["file_path"]) == filename:
-                return dict(item["data"])
-        raise ReauthorizationError(404, "凭证已被删除，请刷新列表")
+        try:
+            return self.get_manager().get_credential(filename)
+        except CredentialNotFound:
+            raise ReauthorizationError(404, "凭证不存在或已被删除，请刷新列表")
 
     async def start(self, filename):
         original = self._credential(filename)

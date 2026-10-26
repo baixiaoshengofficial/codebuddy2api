@@ -1,65 +1,61 @@
 import os
 import tempfile
 import unittest
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import patch
 
 import httpx
 
 from src.checkin_manager import CodeBuddyCheckinManager
-from src.workbuddy_auth_router import (
-    WORKBUDDY_PLATFORM,
-    poll_workbuddy_auth_status,
-    save_workbuddy_token,
-    start_workbuddy_auth,
-)
+from src.workbuddy_auth_router import save_workbuddy_token
+from src.oauth.client import WORKBUDDY, OAuthLoginClient
 from src.workbuddy_token_manager import WorkBuddyTokenManager
 
 
 class WorkBuddyAuthTests(unittest.IsolatedAsyncioTestCase):
     async def test_start_uses_workbuddy_platform(self):
-        captured = {}
+        captured = []
 
-        async def fake_post(url, json=None, headers=None, timeout=None):
-            captured["url"] = str(url)
-            captured["headers"] = headers or {}
-            response = MagicMock()
-            response.status_code = 200
-            response.json.return_value = {
-                "code": 0,
-                "data": {"state": "state-1", "authUrl": "https://example.com/login"},
-            }
-            return response
+        def handler(request):
+            captured.append(request)
+            return httpx.Response(
+                200,
+                json={
+                    "code": 0,
+                    "data": {
+                        "state": "state-1",
+                        "authUrl": "https://example.com/login",
+                    },
+                },
+            )
 
-        client = AsyncMock()
-        client.post = fake_post
-        client_cm = MagicMock()
-        client_cm.__aenter__ = AsyncMock(return_value=client)
-        client_cm.__aexit__ = AsyncMock(return_value=None)
-
-        with patch("src.workbuddy_auth_router.httpx.AsyncClient", return_value=client_cm):
-            result = await start_workbuddy_auth()
-
+        login = OAuthLoginClient(
+            WORKBUDDY,
+            client_factory=lambda: httpx.AsyncClient(
+                transport=httpx.MockTransport(handler)
+            ),
+        )
+        result = await login.start()
         self.assertTrue(result["success"], result)
-        self.assertEqual(result["platform"], WORKBUDDY_PLATFORM)
-        self.assertIn(f"platform={WORKBUDDY_PLATFORM}", captured["url"])
+        self.assertEqual(result["platform"], "workbuddy")
+        self.assertEqual(captured[0].url.params["platform"], "workbuddy")
+        self.assertEqual(captured[0].headers["X-Product"], "SaaS")
         self.assertEqual(result["auth_state"], "state-1")
-        self.assertEqual(result["verification_uri_complete"], "https://example.com/login")
+        self.assertEqual(
+            result["verification_uri_complete"], "https://example.com/login"
+        )
 
     async def test_poll_pending_code(self):
-        async def fake_get(url, headers=None, timeout=None):
-            response = MagicMock()
-            response.status_code = 200
-            response.json.return_value = {"code": 11217, "msg": "login ing..."}
-            return response
-
-        client = AsyncMock()
-        client.get = fake_get
-        client_cm = MagicMock()
-        client_cm.__aenter__ = AsyncMock(return_value=client)
-        client_cm.__aexit__ = AsyncMock(return_value=None)
-
-        with patch("src.workbuddy_auth_router.httpx.AsyncClient", return_value=client_cm):
-            result = await poll_workbuddy_auth_status("state-1")
+        login = OAuthLoginClient(
+            WORKBUDDY,
+            client_factory=lambda: httpx.AsyncClient(
+                transport=httpx.MockTransport(
+                    lambda request: httpx.Response(
+                        200, json={"code": 11217, "msg": "login ing..."}
+                    )
+                )
+            ),
+        )
+        result = await login.poll("state-1")
         self.assertEqual(result["status"], "pending")
 
 
@@ -68,12 +64,14 @@ class WorkBuddyTokenManagerTests(unittest.TestCase):
         temporary = tempfile.TemporaryDirectory()
         self.addCleanup(temporary.cleanup)
         manager = WorkBuddyTokenManager(creds_dir=temporary.name)
-        ok = manager.add_credential_with_data({
-            "bearer_token": "token-1",
-            "user_id": "uid-1",
-            "domain": "copilot.tencent.com",
-            "expires_in": 3600,
-        })
+        ok = manager.add_credential_with_data(
+            {
+                "bearer_token": "token-1",
+                "user_id": "uid-1",
+                "domain": "copilot.tencent.com",
+                "expires_in": 3600,
+            }
+        )
         self.assertTrue(ok)
         info = manager.get_credentials_info()
         self.assertEqual(len(info), 1)
@@ -86,25 +84,37 @@ class WorkBuddyTokenManagerTests(unittest.TestCase):
         temporary = tempfile.TemporaryDirectory()
         self.addCleanup(temporary.cleanup)
         manager = WorkBuddyTokenManager(creds_dir=temporary.name)
-        self.assertTrue(manager.add_credential_with_data({
-            "bearer_token": "old-token",
-            "refresh_token": "old-refresh",
-            "user_id": "uid-1",
-            "domain": "www.codebuddy.cn",
-        }, filename="old-account.json"))
+        self.assertTrue(
+            manager.add_credential_with_data(
+                {
+                    "bearer_token": "old-token",
+                    "refresh_token": "old-refresh",
+                    "user_id": "uid-1",
+                    "domain": "www.codebuddy.cn",
+                },
+                filename="old-account.json",
+            )
+        )
 
-        self.assertTrue(manager.add_credential_with_data({
-            "bearer_token": "new-token",
-            "refresh_token": "new-refresh",
-            "user_id": "uid-1",
-            "domain": "www.codebuddy.cn",
-        }, filename="new-account.json"))
+        self.assertTrue(
+            manager.add_credential_with_data(
+                {
+                    "bearer_token": "new-token",
+                    "refresh_token": "new-refresh",
+                    "user_id": "uid-1",
+                    "domain": "www.codebuddy.cn",
+                },
+                filename="new-account.json",
+            )
+        )
 
         records = manager.get_credential_records()
         self.assertEqual(len(records), 1)
         self.assertEqual(records[0]["filename"], "old-account.json")
         self.assertEqual(records[0]["data"]["bearer_token"], "new-token")
-        self.assertFalse(os.path.exists(os.path.join(temporary.name, "new-account.json")))
+        self.assertFalse(
+            os.path.exists(os.path.join(temporary.name, "new-account.json"))
+        )
 
 
 class CheckinUsesWorkBuddyStoreTests(unittest.IsolatedAsyncioTestCase):
@@ -114,23 +124,34 @@ class CheckinUsesWorkBuddyStoreTests(unittest.IsolatedAsyncioTestCase):
         creds_dir = os.path.join(temporary.name, "creds")
         os.makedirs(creds_dir)
         manager = WorkBuddyTokenManager(creds_dir=creds_dir)
-        manager.add_credential_with_data({
-            "bearer_token": "secret",
-            "user_id": "wb-user",
-            "domain": "copilot.tencent.com",
-        })
+        manager.add_credential_with_data(
+            {
+                "bearer_token": "secret",
+                "user_id": "wb-user",
+                "domain": "copilot.tencent.com",
+            }
+        )
 
         calls = []
 
         def handler(request: httpx.Request):
-            calls.append({
-                "path": request.url.path,
-                "headers": {k: v for k, v in request.headers.items()},
-            })
-            return httpx.Response(200, json={
-                "code": 0,
-                "data": {"active": True, "today_checked_in": True, "today_credit": 100},
-            })
+            calls.append(
+                {
+                    "path": request.url.path,
+                    "headers": {k: v for k, v in request.headers.items()},
+                }
+            )
+            return httpx.Response(
+                200,
+                json={
+                    "code": 0,
+                    "data": {
+                        "active": True,
+                        "today_checked_in": True,
+                        "today_credit": 100,
+                    },
+                },
+            )
 
         transport = httpx.MockTransport(handler)
         checkin = CodeBuddyCheckinManager(
@@ -170,13 +191,15 @@ class SaveWorkbuddyTokenTests(unittest.IsolatedAsyncioTestCase):
         self.addCleanup(temporary.cleanup)
         manager = WorkBuddyTokenManager(creds_dir=temporary.name)
         with patch("src.workbuddy_auth_router.workbuddy_token_manager", manager):
-            ok = await save_workbuddy_token({
-                "access_token": "abc.def.ghi",
-                "refresh_token": "refresh",
-                "expires_in": 7200,
-                "domain": "copilot.tencent.com",
-                "account_uid": "12345",
-            })
+            ok = await save_workbuddy_token(
+                {
+                    "access_token": "abc.def.ghi",
+                    "refresh_token": "refresh",
+                    "expires_in": 7200,
+                    "domain": "copilot.tencent.com",
+                    "account_uid": "12345",
+                }
+            )
         self.assertTrue(ok)
         records = manager.get_credential_records()
         self.assertEqual(len(records), 1)

@@ -106,31 +106,6 @@ async def health_check():
     return {"status": "healthy", "service": "codebuddy2api"}
 
 
-@app.get("/")
-async def root():
-    """根路径信息"""
-    return {
-        "service": "CodeBuddy2API",
-        "version": "1.0.0",
-        "description": "CodeBuddy API proxy with OpenAI-compatible interface",
-        "endpoints": {
-            "openai_base": "/codebuddy/v1",
-            "models": "/codebuddy/v1/models",
-            "chat": "/codebuddy/v1/chat/completions",
-            "responses": "/codebuddy/v1/responses",
-            "credentials": "/codebuddy/v1/credentials",
-            "auth_start": "/codebuddy/auth/start",
-            "auth_poll": "/codebuddy/auth/poll",
-            "auth_callback": "/codebuddy/auth/callback",
-            "workbuddy_auth_start": "/workbuddy/auth/start",
-            "workbuddy_auth_poll": "/workbuddy/auth/poll",
-            "workbuddy_credentials": "/workbuddy/credentials",
-            "get_settings": "/api/settings",
-            "save_settings": "/api/settings"
-        }
-    }
-
-
 if __name__ == "__main__":
     from hypercorn.asyncio import serve
     from hypercorn.config import Config

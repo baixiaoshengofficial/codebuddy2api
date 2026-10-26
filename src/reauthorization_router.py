@@ -1,20 +1,12 @@
 """Shared HTTP adapter for credential-specific provider authorization."""
 
 from fastapi import APIRouter, Depends
-from pydantic import BaseModel, Field
 
 from .auth import authenticate
 from .authorization_router import authorization_response
 from .device_authorization import AuthorizationError
 from .credential_reauthorization import CredentialReauthorization
-
-
-class ReauthorizationStart(BaseModel):
-    filename: str = Field(..., min_length=1, max_length=255)
-
-
-class ReauthorizationPoll(BaseModel):
-    auth_state: str = Field(..., min_length=1, max_length=2048)
+from .models import ReauthorizationStart, ReauthorizationPoll
 
 
 def create_reauthorization_router(

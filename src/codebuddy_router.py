@@ -1,7 +1,4 @@
-"""
-CodeBuddy API Router - 兼容CodeBuddy官方API格式
-重构版本 - 优化了代码结构、错误处理和资源管理
-"""
+"""OpenAI-compatible endpoints, request auditing and credential readiness."""
 import json
 import time
 import uuid
@@ -16,7 +13,7 @@ from fastapi import APIRouter, HTTPException, Depends, Request, Header
 from fastapi.responses import StreamingResponse
 
 from .auth import authenticate
-from .codebuddy_api_client import codebuddy_api_client
+from .chat.headers import chat_request_headers
 from .codebuddy_model_manager import codebuddy_model_manager
 from .codebuddy_token_manager import codebuddy_token_manager
 from .codebuddy_refresh import (
@@ -530,7 +527,7 @@ async def chat_completions(
         )
 
         # 生成请求头
-        headers = codebuddy_api_client.generate_codebuddy_headers(
+        headers = chat_request_headers(
             bearer_token=credential.get('bearer_token'),
             user_id=credential.get('user_id'),
             conversation_id=x_conversation_id,
@@ -618,7 +615,7 @@ async def responses(
             model=payload.get("model", "unknown"),
             credential=credential,
         )
-        headers = codebuddy_api_client.generate_codebuddy_headers(
+        headers = chat_request_headers(
             bearer_token=credential.get('bearer_token'),
             user_id=credential.get('user_id'),
             conversation_id=x_conversation_id,
