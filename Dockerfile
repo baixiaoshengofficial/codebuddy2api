@@ -11,8 +11,8 @@ COPY go.mod go.sum ./
 RUN go mod download
 COPY cmd/ ./cmd/
 COPY internal/ ./internal/
-ARG CODEBUDDY_REVISION=""
-RUN CGO_ENABLED=1 go build -trimpath -ldflags="-s -w -X main.revision=${CODEBUDDY_REVISION}" -o /out/codebuddy2api ./cmd/codebuddy2api
+RUN --mount=type=cache,target=/root/.cache/go-build \
+    CGO_ENABLED=1 go build -trimpath -ldflags="-s -w" -o /out/codebuddy2api ./cmd/codebuddy2api
 
 FROM hub.baixiaosheng.de/debian:bookworm-slim
 ARG CODEBUDDY_VERSION=1.0.0

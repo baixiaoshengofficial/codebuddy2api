@@ -84,6 +84,6 @@ CODEBUDDY_REVISION="$(git rev-parse HEAD)" \
   docker compose -f docker-compose.yml -f docker-compose.build.yml up -d --build --wait
 ```
 
-镜像在构建阶段编译 Go 与前端，运行阶段仅带二进制、静态页面和系统证书。容器仍以 UID 1001 运行。健康检查使用 `codebuddy2api healthcheck`；自定义 Compose 中的旧 Python 健康检查需要同步替换。
+镜像在构建阶段编译 Go 与前端，运行阶段仅带二进制、静态页面和系统证书。容器仍以 UID 1001 运行。Compose 在容器内固定监听 `0.0.0.0`，`CODEBUDDY_PORT` 同步用于容器端口和宿主机映射。健康检查使用 `codebuddy2api healthcheck`；自定义 Compose 中的旧 Python 健康检查需要同步替换。
 
 服务的 `/docs` 提供参数说明，`/openapi.json` 提供接口清单。界面截图见 [README](../README.md)。
