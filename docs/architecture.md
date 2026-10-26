@@ -125,7 +125,16 @@ WorkBuddy 删除使用 `DELETE /workbuddy/credentials/{filename}`，管理器核
 
 ### Docker 更新方式
 
-默认 `docker-compose.yml` 使用 Docker Hub 的唯一 `latest` 标签，`pull_policy: always` 在启动时检查更新；三个数据卷保留配置与凭证，`--wait` 等待健康检查。源码构建显式叠加 `docker-compose.build.yml`，使用本地镜像和 `pull_policy: build`；远程源码部署脚本同样使用该组合。两套方式均需要 Docker Compose v2 或更新版本。具体更新与版本参数见 README 的 Docker 部署章节。
+默认 `docker-compose.yml` 使用 Docker Hub 的唯一 `latest` 标签，`pull_policy: always` 在启动时检查更新；三个数据卷保留配置与凭证，`--wait` 等待健康检查。源码构建显式叠加 `docker-compose.build.yml`，使用本地镜像和 `pull_policy: build`；远程源码部署脚本同样使用该组合。两套方式均需要 Docker Compose v2 或更新版本。
+
+克隆仓库并配置 `.env` 后，执行源码构建：
+
+```bash
+CODEBUDDY_REVISION="$(git rev-parse HEAD)" \
+  docker compose -f docker-compose.yml -f docker-compose.build.yml up -d --build --wait
+```
+
+源码更新时先执行 `git pull origin main`，再执行上述构建命令，继续使用这两个配置文件。镜像部署的更新命令见 [README](../README.md#更新)。
 
 ### 筛选与列表交互
 
@@ -145,7 +154,25 @@ API 测试以回复文本为主，保留原始 JSON；HTTP 200 内的 SSE `error
 
 ### 验证与发布
 
+本地运行使用 Python 3.11、Node.js 22.8 或更新版本。创建 `.env` 并设置密码后：
+
 ```bash
+python3 -m venv venv
+source venv/bin/activate
+python -m pip install -r requirements.txt
+cd frontend
+npm ci
+npm run build
+cd ..
+python web.py
+```
+
+Windows 激活虚拟环境使用 `venv\Scripts\activate`。开发前端可另开终端在 `frontend/` 运行 `npm run dev`，接口默认转发到后端 `127.0.0.1:8001`。
+
+在已激活的虚拟环境中安装 `pytest`，执行验证：
+
+```bash
+python -m pip install pytest
 python -m pytest -q
 python -m compileall -q src web.py config.py
 cd frontend
