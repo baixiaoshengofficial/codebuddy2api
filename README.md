@@ -1,6 +1,6 @@
 # CodeBuddy2API
 
-CodeBuddy 的 OpenAI 兼容 API 代理，账号授权、请求记录和 WorkBuddy 签到在网页里管理。
+Go 编写的 CodeBuddy OpenAI 兼容 API 代理，账号授权、请求记录和 WorkBuddy 签到在网页里管理。
 
 ## 安装
 

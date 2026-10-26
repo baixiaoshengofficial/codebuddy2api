@@ -22,21 +22,18 @@ cleanup() {
 trap cleanup EXIT
 
 if [[ -z "$CODEBUDDY_PASSWORD" && -f "$ROOT_DIR/.env" ]]; then
-  CODEBUDDY_PASSWORD="$(
-    python3 - "$ROOT_DIR/.env" <<'PY'
-import pathlib
-import sys
-
-for line in pathlib.Path(sys.argv[1]).read_text().splitlines():
-    line = line.strip()
-    if not line or line.startswith("#") or "=" not in line:
-        continue
-    key, value = line.split("=", 1)
-    if key.strip() == "CODEBUDDY_PASSWORD":
-        print(value.strip().strip('"').strip("'"))
-        break
-PY
-  )"
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    if [[ "$line" =~ ^[[:space:]]*CODEBUDDY_PASSWORD[[:space:]]*=(.*)$ ]]; then
+      value="${BASH_REMATCH[1]}"
+      value="${value#"${value%%[![:space:]]*}"}"
+      value="${value%"${value##*[![:space:]]}"}"
+      if [[ "$value" == \"*\" || "$value" == \'*\' ]]; then
+        value="${value:1:${#value}-2}"
+      fi
+      CODEBUDDY_PASSWORD="$value"
+      break
+    fi
+  done < "$ROOT_DIR/.env"
 fi
 
 if [[ -z "$CODEBUDDY_PASSWORD" ]]; then
@@ -84,6 +81,8 @@ EOF
 echo "==> Packaging repository"
 COPYFILE_DISABLE=1 tar --no-xattrs -czf "$ARCHIVE" -C "$ROOT_DIR" \
   --exclude='.git' \
+  --exclude='bin' \
+  --exclude='coverage.out' \
   --exclude='venv' \
   --exclude='.venv' \
   --exclude='node_modules' \

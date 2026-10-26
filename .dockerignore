@@ -49,3 +49,8 @@ config/
 # Log files
 *.log
 logs/
+
+# Local Go output
+bin/
+coverage.out
+*.test

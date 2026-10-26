@@ -18,7 +18,7 @@ export DEPLOY_PASSWORD
 export CODEBUDDY_PASSWORD
 export CMD
 
-.PHONY: help frontend-dev frontend-build deploy deploy-install-docker deploy-cn deploy-intl ps logs restart down shell health check remote
+.PHONY: run build test help frontend-dev frontend-build deploy deploy-install-docker deploy-cn deploy-intl ps logs restart down shell health check remote
 
 help:
 	@echo "CodeBuddy2API deployment targets"
@@ -83,10 +83,22 @@ frontend-dev:
 frontend-build:
 	@cd frontend && npm run build
 
+run:
+	@go run ./cmd/codebuddy2api
+
+build:
+	@mkdir -p bin
+	@CGO_ENABLED=1 go build -trimpath -o bin/codebuddy2api ./cmd/codebuddy2api
+
+test:
+	@go test -race -timeout 120s ./...
+	@cd frontend && npm test
+
 check:
 	@bash -n scripts/deploy_docker.sh
-	@cd frontend && npm run build
-	@python3 -m py_compile config.py web.py src/*.py
+	@go vet ./...
+	@go test -race -timeout 120s ./...
+	@cd frontend && npm test && npm run build
 	@git diff --check
 
 remote:

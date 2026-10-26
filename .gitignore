@@ -173,3 +173,8 @@ logs/
 *.bak
 *.backup
 .claude/settings.local.json
+
+# Go build artifacts
+/bin/
+/coverage.out
+*.test

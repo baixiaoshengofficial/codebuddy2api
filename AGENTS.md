@@ -1,29 +1,28 @@
 # Repository Guidelines
 
-## Project Structure & Module Organization
+## Structure
 
-This repository is a Python service that wraps CodeBuddy with an OpenAI-compatible API. The main application entrypoint is `web.py`, which creates the FastAPI app and mounts routers. Core modules live in `src/`: API routing in `codebuddy_router.py`, authentication in `auth.py` and `codebuddy_auth_router.py`, credential rotation in `codebuddy_token_manager.py`, settings in `settings_router.py`, and shared schemas in `models.py`. The browser admin UI is a single static file at `frontend/admin.html`. Runtime configuration is loaded from `config.py` and environment variables, with examples in `.env.example`. Docker packaging is defined by `Dockerfile`, `docker-compose.yml`, and `entrypoint.sh`.
+The backend is Go. `cmd/codebuddy2api` is the executable entry point and `internal/app` is the composition root. Domain packages own chat, credentials, OAuth, check-in, configuration, model discovery and the SQLite ledger. `internal/httpapi` owns transport validation and presentation. The Vue admin console lives in `frontend/`.
 
-## Build, Test, and Development Commands
+Keep packages focused. Define small interfaces where they are consumed and inject dependencies through constructors. Domain code must not import HTTP handlers or the composition root. Do not add global mutable service singletons or provider-specific branches to unrelated domains.
 
-- `python3 -m venv venv && source venv/bin/activate`: create and activate a local environment.
-- `pip install -r requirements.txt`: install FastAPI, Hypercorn, HTTP clients, and configuration dependencies.
-- `cp .env.example .env`: create local configuration; set `CODEBUDDY_PASSWORD` before running.
-- `python web.py`: run the service locally, defaulting to `http://127.0.0.1:8001`.
-- `docker compose up --build`: build and run the containerized service with mounted config and credential directories.
+## Development
 
-## Coding Style & Naming Conventions
+Use Go 1.23+ with CGO and a C compiler for SQLite. The Docker build pins its toolchain. Frontend builds need Node.js 22.8+.
 
-Use Python 3.8+ syntax and keep code compatible with the pinned dependencies in `requirements.txt`. Follow PEP 8 conventions: 4-space indentation, `snake_case` for functions and variables, `PascalCase` for Pydantic models, and descriptive module names. Keep FastAPI routers focused by domain, and place request/response schemas in `src/models.py` when shared. Prefer async I/O for network paths, matching the existing `httpx` and FastAPI style.
+- `go run ./cmd/codebuddy2api`: run from the project root after configuring `.env` and building the frontend.
+- `make build`: compile `bin/codebuddy2api`.
+- `go test -race -timeout 120s ./...`: run isolated backend tests.
+- `go vet ./...`: static checks.
+- `cd frontend && npm test && npm run build`: frontend verification.
+- `docker compose -f docker-compose.yml -f docker-compose.build.yml up -d --build --wait`: source deployment.
 
-## Testing Guidelines
+Run `gofmt` on Go changes. Use context cancellation for network operations and background jobs. Keep account JSON, routing state, configuration and SQLite schema compatible unless a documented migration is included. Model POSTs must never be retried after uncertain transport failures or partial output. Failover is limited to explicit credit exhaustion before output.
 
-No test suite is currently committed. When adding tests, use `pytest` and place them under `tests/`, mirroring module names such as `tests/test_codebuddy_router.py`. Cover authentication behavior, credential rotation, streaming/non-streaming chat responses, and settings persistence. Until automated tests exist, verify changes by running `python web.py`, checking `GET /health`, and exercising `POST /codebuddy/v1/chat/completions` with a valid bearer token.
+## Tests
 
-## Commit & Pull Request Guidelines
+Place Go tests beside their packages. Use temporary directories, injected clocks and mocked HTTP transports. Cover public behavior, concurrency, streaming, renewal, failover and persistence failures. Do not use real credentials or model calls in automated tests.
 
-Recent commits use short Chinese summaries focused on the change, such as `优化性能` or `修复凭证轮换功能`. Keep commits concise, present-tense, and scoped to one logical change. Pull requests should include a brief description, configuration changes, manual test steps, and screenshots when `frontend/admin.html` changes. Never include `.env`, credential files, or local runtime data in commits.
+## Commits and Security
 
-## Security & Configuration Tips
-
-Treat `CODEBUDDY_PASSWORD` and files in `.codebuddy_creds/` as secrets. Keep local overrides in `.env`, not source files. When changing defaults in `.env.example` or `config.py`, document operational impact in the PR.
+Use short Chinese commit summaries. Maintain a single `main` branch and a single published Docker tag, `latest`. Never commit `.env`, runtime configuration, account credentials or databases. Credential and authorization endpoints must not return tokens; previews and errors must redact secrets. Document deployment changes in `docs/architecture.md` and keep the README concise.

@@ -1,55 +1,34 @@
 FROM hub.baixiaosheng.de/node:22-alpine AS frontend-builder
-
 WORKDIR /frontend
 COPY frontend/package.json frontend/package-lock.json ./
 RUN npm ci
 COPY frontend/ ./
 RUN npm run build
 
-# 使用官方的、轻量级的 Python 镜像作为基础
-FROM hub.baixiaosheng.de/python:3.11-slim
+FROM hub.baixiaosheng.de/golang:1.27.3-bookworm AS backend-builder
+WORKDIR /src
+COPY go.mod go.sum ./
+RUN go mod download
+COPY cmd/ ./cmd/
+COPY internal/ ./internal/
+ARG CODEBUDDY_REVISION=""
+RUN CGO_ENABLED=1 go build -trimpath -ldflags="-s -w -X main.revision=${CODEBUDDY_REVISION}" -o /out/codebuddy2api ./cmd/codebuddy2api
 
+FROM hub.baixiaosheng.de/debian:bookworm-slim
 ARG CODEBUDDY_VERSION=1.0.0
 ARG CODEBUDDY_REVISION=""
 ENV CODEBUDDY_VERSION=${CODEBUDDY_VERSION} \
-    CODEBUDDY_REVISION=${CODEBUDDY_REVISION}
-
-# 设置容器内的工作目录
+    CODEBUDDY_REVISION=${CODEBUDDY_REVISION} \
+    CODEBUDDY_HOST=0.0.0.0
+RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates gosu \
+    && rm -rf /var/lib/apt/lists/* \
+    && useradd -m -u 1001 appuser
 WORKDIR /app
-
-# 复制依赖文件
-COPY requirements.txt .
-
-# 安装依赖
-# --no-cache-dir 选项可以减小镜像体积
-RUN pip install --no-cache-dir -r requirements.txt
-
-# 安装 gosu，一个轻量级的 su/sudo 替代品，用于在脚本中切换用户
-# 并在同一层中进行清理以减小镜像体积
-RUN apt-get update && \
-    apt-get install -y gosu && \
-    rm -rf /var/lib/apt/lists/*
-
-# 创建一个非root用户来运行应用
-RUN useradd -m -u 1001 appuser
-
-# 复制并设置入口脚本
-COPY entrypoint.sh /usr/local/bin/
-RUN chmod +x /usr/local/bin/entrypoint.sh
-ENTRYPOINT ["entrypoint.sh"]
-
-# 将项目和前端构建产物复制到工作目录中
-COPY . .
+COPY --from=backend-builder /out/codebuddy2api /usr/local/bin/codebuddy2api
 COPY --from=frontend-builder /frontend/dist ./frontend/dist
-# The service runs as appuser.  COPY may preserve restrictive permissions from
-# a locally built frontend/dist directory, so ensure the static admin files are
-# traversable and readable by the runtime user.
-RUN chmod -R a+rX /app/frontend/dist
-
-# 声明容器将要监听的端口
-# 这个端口应该与您在配置中设置的 CODEBUDDY_PORT 一致
+COPY entrypoint.sh /usr/local/bin/entrypoint.sh
+RUN chmod +x /usr/local/bin/entrypoint.sh && chmod -R a+rX /app/frontend/dist
+ENTRYPOINT ["entrypoint.sh"]
 EXPOSE 8001
-
-# 定义容器启动时要执行的命令
-# 使用 Hypercorn 启动，它是一个生产级的 ASGI 服务器
-CMD ["hypercorn", "web:app", "--bind", "0.0.0.0:8001"]
+HEALTHCHECK --interval=30s --timeout=6s --start-period=20s --retries=3 CMD ["codebuddy2api", "healthcheck"]
+CMD ["codebuddy2api"]

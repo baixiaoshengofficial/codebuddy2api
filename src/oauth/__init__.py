@@ -1,1 +1,0 @@
-"""Upstream device login adapters."""
