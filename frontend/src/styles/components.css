@@ -68,6 +68,7 @@
   gap: 12px;
   align-items: center;
   justify-content: space-between;
+  flex-wrap: wrap;
 }
 .section-description {
   color: var(--muted);
@@ -228,8 +229,7 @@
   margin-top: 5px;
   overflow-wrap: anywhere;
 }
-.table-toolbar,
-.filter-bar {
+.table-toolbar {
   display: flex;
   align-items: center;
   flex-wrap: wrap;
@@ -389,8 +389,7 @@
     padding: 17px;
     flex-wrap: wrap;
   }
-  .table-toolbar,
-  .filter-bar {
+  .table-toolbar {
     padding-inline: 16px;
   }
   .table-toolbar input {

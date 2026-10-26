@@ -1,56 +1,55 @@
 import { computed, reactive, ref, watch } from "vue";
 import { useResource } from "./useResource";
 import { consoleApi, exportRequests } from "../services/console";
-import { notify } from "../lib/notify";
 import { useAction } from "./useAction";
+import {
+  activeRequestFilterCount,
+  beijingInputTime,
+  commitRequestFilters,
+  createAppliedRequestFilters,
+  createRequestFilters,
+  requestQueryParams,
+} from "../lib/requestFilters";
 
 export function useRequestLogs() {
-  const inputTime = (time) =>
-    new Date(time + 480 * 60000).toISOString().slice(0, 16);
-  const appliedRange = ref([Date.now() - 86400000, Date.now()]);
-  const filters = reactive({
-    period: "today",
-    model: "",
-    client: "",
-    credential: "",
-    status: "",
-    search: "",
-    start: inputTime(appliedRange.value[0]),
-    end: inputTime(appliedRange.value[1]),
-  });
+  const now = Date.now();
+  const filters = reactive(createRequestFilters(now));
+  const applied = ref(createAppliedRequestFilters(now));
   const page = ref(1);
-  const params = computed(() => {
-    const value = new URLSearchParams({
-      page: page.value,
-      page_size: 20,
-      offset: 480,
-    });
-    for (const [key, entry] of Object.entries(filters)) {
-      if (key === "start" || key === "end") {
-        if (filters.period === "custom")
-          value.set(key, appliedRange.value[key === "start" ? 0 : 1]);
-      } else if (entry) value.set(key, entry);
-    }
-    return value;
-  });
+  const pageSize = ref(20);
+  const rangeError = ref("");
+  const params = computed(() =>
+    requestQueryParams(applied.value, page.value, pageSize.value),
+  );
   const resource = useResource(
     () => consoleApi.requests(params.value),
     { items: [], filters: {}, pages: 1, total: 0 },
     5000,
   );
-  function apply() {
-    if (filters.period === "custom") {
-      const range = [filters.start, filters.end].map((value) =>
-        Date.parse(`${value}+08:00`),
-      );
-      if (!range.every(Number.isFinite) || range[0] >= range[1]) {
-        notify("请选择有效的开始和结束时间", "error");
-        return;
-      }
-      appliedRange.value = range;
-    }
+  function updateFilters(patch) {
+    Object.assign(filters, patch);
+  }
+  function commit(action) {
+    applied.value = commitRequestFilters(applied.value, filters, action);
     page.value = 1;
-    resource.refresh();
+  }
+  function applySearch() {
+    commit("search");
+  }
+  function applyRange() {
+    try {
+      commit("range");
+      rangeError.value = "";
+    } catch (error) {
+      rangeError.value = error.message;
+    }
+  }
+  function resetFilters() {
+    const now = Date.now();
+    Object.assign(filters, createRequestFilters(now));
+    applied.value = createAppliedRequestFilters(now);
+    rangeError.value = "";
+    page.value = 1;
   }
   watch(
     () => [
@@ -60,21 +59,54 @@ export function useRequestLogs() {
       filters.credential,
       filters.status,
     ],
-    apply,
+    () => commit("dimensions"),
+  );
+  watch(
+    () => [filters.start, filters.end],
+    () => {
+      rangeError.value = "";
+    },
+  );
+  watch(pageSize, () => {
+    page.value = 1;
+  });
+  watch(() => params.value.toString(), resource.refresh);
+  watch(
+    () => resource.data.value.pages,
+    (pages) => {
+      if (page.value > pages) page.value = Math.max(1, pages);
+    },
   );
   function changePage(delta) {
     page.value = Math.min(
       resource.data.value.pages,
       Math.max(1, page.value + delta),
     );
-    resource.refresh();
   }
+  const activeCount = computed(() => activeRequestFilterCount(applied.value));
+  const pendingSearch = computed(
+    () => filters.search.trim() !== applied.value.search,
+  );
+  const pendingRange = computed(
+    () =>
+      filters.period === "custom" &&
+      (filters.start !== beijingInputTime(applied.value.start) ||
+        filters.end !== beijingInputTime(applied.value.end)),
+  );
   const { run, busy: exporting } = useAction();
   return {
     ...resource,
     filters,
+    updateFilters,
     page,
-    apply,
+    pageSize,
+    activeCount,
+    pendingSearch,
+    pendingRange,
+    rangeError,
+    applySearch,
+    applyRange,
+    resetFilters,
     changePage,
     exporting,
     exportCsv: () => run(() => exportRequests(params.value)),

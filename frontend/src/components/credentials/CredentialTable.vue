@@ -4,8 +4,13 @@ import { KeyRound, LockKeyhole, Trash2, ShieldCheck } from "@lucide/vue";
 import StatusBadge from "../StatusBadge.vue";
 import AuthorizationPanel from "./AuthorizationPanel.vue";
 import { credentialLabel, dateTime } from "../../lib/format";
-const props = defineProps({ rows: Array, busy: Boolean, serverTime: Number });
-defineEmits(["lock", "delete", "test", "saved"]);
+const props = defineProps({
+  rows: Array,
+  busy: Boolean,
+  serverTime: Number,
+  filtered: Boolean,
+});
+defineEmits(["lock", "delete", "test", "saved", "reset"]);
 const now = ref(Date.now());
 let timer,
   offset = 0;
@@ -41,7 +46,18 @@ function cooldown(row) {
         <tr v-if="!rows.length">
           <td colspan="4">
             <div class="empty-state">
-              <KeyRound :size="24" />暂无凭证，点击“添加凭证”完成授权
+              <KeyRound :size="24" /><strong>{{
+                filtered
+                  ? "没有符合条件的凭证"
+                  : "暂无凭证，点击“添加凭证”完成授权"
+              }}</strong>
+              <button
+                v-if="filtered"
+                class="button secondary"
+                @click="$emit('reset')"
+              >
+                重置筛选
+              </button>
             </div>
           </td>
         </tr>
@@ -65,6 +81,9 @@ function cooldown(row) {
             <StatusBadge
               :state="row.is_current ? 'active' : row.state"
               :label="row.is_current ? '当前使用' : undefined"
+            /><StatusBadge
+              v-if="row.is_current && row.state === 'refreshable'"
+              state="refreshable"
             /><small v-if="row.state === 'cooldown'">{{ cooldown(row) }}</small>
           </td>
           <td data-label="有效期">
@@ -74,7 +93,11 @@ function cooldown(row) {
                 : "未提供到期时间"
             }}</strong
             ><small>{{
-              row.has_refresh_token ? "支持自动续期" : "到期后需要重新授权"
+              row.state === "reauthorize"
+                ? "登录会话已失效，请重新授权"
+                : row.has_refresh_token
+                  ? "支持自动续期"
+                  : "到期后需要重新授权"
             }}</small>
           </td>
           <td data-label="操作">

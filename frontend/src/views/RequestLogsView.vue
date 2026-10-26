@@ -1,16 +1,11 @@
 <script setup>
 import { ref } from "vue";
-import {
-  ChevronLeft,
-  ChevronRight,
-  Download,
-  RefreshCw,
-  Search,
-} from "@lucide/vue";
+import { ChevronLeft, ChevronRight, Download, RefreshCw } from "@lucide/vue";
 import PageHeader from "../components/PageHeader.vue";
 import ResourceNotice from "../components/ResourceNotice.vue";
 import StatusBadge from "../components/StatusBadge.vue";
 import RequestDetails from "../components/requests/RequestDetails.vue";
+import RequestFilters from "../components/requests/RequestFilters.vue";
 import { useRequestLogs } from "../composables/useRequestLogs";
 import { dateTime, latency } from "../lib/format";
 const {
@@ -20,7 +15,15 @@ const {
   refresh,
   filters,
   page,
-  apply,
+  pageSize,
+  updateFilters,
+  activeCount,
+  pendingSearch,
+  pendingRange,
+  rangeError,
+  applySearch,
+  applyRange,
+  resetFilters,
   changePage,
   exporting,
   exportCsv,
@@ -37,83 +40,27 @@ const selected = ref(null);
         <RefreshCw :size="16" :class="{ spin: loading }" />刷新</button
       ><button
         class="button secondary"
-        :disabled="exporting"
+        :disabled="exporting || loading || !!error || !data.total"
         @click="exportCsv"
       >
-        <Download :size="16" />导出 CSV
+        <Download :size="16" />{{ exporting ? "导出中…" : "导出 CSV" }}
       </button></PageHeader
     >
     <ResourceNotice :error="error" @retry="refresh" />
     <section class="data-section">
-      <div class="filter-bar">
-        <div class="segmented-control" aria-label="时间范围">
-          <button
-            v-for="[value, label] in [
-              ['today', '今天'],
-              ['24h', '近 24 小时'],
-              ['7d', '近 7 天'],
-              ['custom', '自定义'],
-            ]"
-            :key="value"
-            :class="{ active: filters.period === value }"
-            @click="filters.period = value"
-          >
-            {{ label }}
-          </button>
-        </div>
-        <small>北京时间 UTC+8</small><span class="grow" />
-        <form class="search-form" @submit.prevent="apply">
-          <input
-            v-model="filters.search"
-            aria-label="搜索请求 ID 或输入"
-            placeholder="搜索请求 ID 或输入内容"
-            type="search"
-          /><button class="icon-button" aria-label="搜索请求">
-            <Search :size="17" />
-          </button>
-        </form>
-      </div>
-      <form
-        v-if="filters.period === 'custom'"
-        class="filter-bar"
-        @submit.prevent="apply"
-      >
-        <label
-          >开始<input
-            v-model="filters.start"
-            type="datetime-local"
-            required /></label
-        ><label
-          >结束<input
-            v-model="filters.end"
-            type="datetime-local"
-            required /></label
-        ><button class="button secondary">应用时间范围</button>
-      </form>
-      <div class="filter-bar">
-        <select v-model="filters.model" aria-label="筛选模型">
-          <option value="">全部模型</option>
-          <option v-for="item in data.filters.models" :key="item">
-            {{ item }}
-          </option></select
-        ><select v-model="filters.client" aria-label="筛选来源">
-          <option value="">全部来源</option>
-          <option v-for="item in data.filters.clients" :key="item">
-            {{ item }}
-          </option></select
-        ><select v-model="filters.credential" aria-label="筛选凭证">
-          <option value="">全部凭证</option>
-          <option v-for="item in data.filters.credentials" :key="item">
-            {{ item }}
-          </option></select
-        ><select v-model="filters.status" aria-label="筛选状态">
-          <option value="">全部状态</option>
-          <option value="success">成功</option>
-          <option value="error">失败</option>
-          <option value="pending">处理中</option>
-        </select>
-      </div>
-      <div class="table-shell">
+      <RequestFilters
+        :filters="filters"
+        :options="data.filters"
+        :active-count="activeCount"
+        :pending-search="pendingSearch"
+        :pending-range="pendingRange"
+        :range-error="rangeError"
+        @change="updateFilters"
+        @search="applySearch"
+        @range="applyRange"
+        @reset="resetFilters"
+      />
+      <div class="table-shell" :aria-busy="loading">
         <table class="data-table request-table">
           <thead>
             <tr>
@@ -130,19 +77,48 @@ const selected = ref(null);
             <tr v-if="!data.items.length">
               <td colspan="7">
                 <div class="empty-state">
-                  {{ loading ? "正在加载…" : "当前范围没有请求" }}
+                  <strong>{{
+                    loading
+                      ? "正在加载…"
+                      : error
+                        ? "请求记录加载失败"
+                        : activeCount
+                          ? "没有符合筛选条件的请求"
+                          : "今天还没有请求"
+                  }}</strong>
+                  <small v-if="!loading && !error">{{
+                    activeCount
+                      ? "可以调整条件或重置筛选后再查看。"
+                      : "可切换到近 24 小时或近 7 天查看历史记录。"
+                  }}</small>
+                  <button
+                    v-if="!loading && error"
+                    class="button secondary"
+                    @click="refresh"
+                  >
+                    重新加载
+                  </button>
+                  <button
+                    v-else-if="!loading && activeCount"
+                    class="button secondary"
+                    @click="resetFilters"
+                  >
+                    重置筛选
+                  </button>
                 </div>
               </td>
             </tr>
             <tr v-for="item in data.items" :key="item.id">
               <td data-label="时间 / 来源">
                 <strong>{{ dateTime(item.created_at) }}</strong
-                ><small>{{ item.client }}</small>
+                ><small :title="item.client">{{ item.client }}</small>
               </td>
               <td data-label="状态"><StatusBadge :state="item.status" /></td>
               <td data-label="模型 / 凭证">
-                <strong>{{ item.model }}</strong
-                ><small>{{ item.credential || "—" }}</small>
+                <strong :title="item.model">{{ item.model }}</strong
+                ><small :title="item.credential">{{
+                  item.credential || "—"
+                }}</small>
               </td>
               <td data-label="上游尝试">
                 <span
@@ -158,7 +134,9 @@ const selected = ref(null);
                 ><small>{{ latency(item.latency_ms) }}</small>
               </td>
               <td data-label="本轮输入" class="request-cell">
-                <p class="truncate">{{ item.request_preview }}</p>
+                <p class="truncate" :title="item.request_preview">
+                  {{ item.request_preview }}
+                </p>
                 <small class="truncate">ID {{ item.request_id }}</small>
               </td>
               <td>
@@ -175,7 +153,21 @@ const selected = ref(null);
         </table>
       </div>
       <footer class="pagination">
-        <span>共 {{ data.total }} 条 · 每 5 秒更新</span>
+        <span
+          >{{
+            data.total
+              ? `${(page - 1) * pageSize + 1}–${Math.min(page * pageSize, data.total)} / 共 ${data.total} 条`
+              : "共 0 条"
+          }}
+          · 每 5 秒更新</span
+        >
+        <label class="page-size"
+          >每页<select v-model.number="pageSize" aria-label="每页条数">
+            <option :value="20">20 条</option>
+            <option :value="50">50 条</option>
+            <option :value="100">100 条</option>
+          </select></label
+        >
         <div>
           <button
             class="icon-button"

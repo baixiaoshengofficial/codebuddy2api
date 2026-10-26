@@ -151,6 +151,13 @@
   display: flex;
   gap: 9px;
   align-items: center;
+  flex-wrap: wrap;
+}
+.view-toolbar > div {
+  min-width: 0;
+}
+.view-toolbar > .toolbar-actions {
+  justify-content: flex-end;
 }
 .data-grid {
   display: grid;

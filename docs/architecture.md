@@ -127,6 +127,18 @@ WorkBuddy 删除使用 `DELETE /workbuddy/credentials/{filename}`，管理器核
 
 默认 `docker-compose.yml` 使用 Docker Hub 的唯一 `latest` 标签，`pull_policy: always` 在启动时检查更新；三个数据卷保留配置与凭证，`--wait` 等待健康检查。源码构建显式叠加 `docker-compose.build.yml`，使用本地镜像和 `pull_policy: build`；远程源码部署脚本同样使用该组合。两套方式均需要 Docker Compose v2 或更新版本。具体更新与版本参数见 README 的 Docker 部署章节。
 
+### 筛选与列表交互
+
+请求筛选由 `components/requests/RequestFilters.vue` 展示，`lib/requestFilters.js` 负责纯查询转换和北京时间范围校验，`useRequestLogs` 协调已提交条件、轮询、导出与分页。桌面端模型、来源、凭证和状态固定为一行四列，长选项不会改变列宽；600 像素及以下使用两列布局。
+
+搜索文字及自定义日期区分编辑值和已提交值，输入未提交时不影响自动刷新或 CSV 导出。下拉条件即时生效，搜索按回车或按钮提交，时间范围显式应用；非法时间范围在本地提示，不发送请求。重置恢复默认条件，正在使用但已从候选列表消失的值仍可见。分页支持 20、50、100 条，切换条数回到第一页；日志减少造成页码超界时自动回到有效页。无数据、加载中或加载失败时禁用导出。
+
+凭证列表区分“没有符合条件的凭证”和“尚未添加凭证”，筛选无结果时可直接重置。WorkBuddy 独立显示授权状态、到期时间、签到结果及检查时间，历史签到成功不会掩盖待续期状态，签到确认会话失效时提示重新授权。请求表固定列宽，长来源、模型及凭证显示省略与完整内容提示；工具栏、行操作和设置保存栏按可用空间换行。
+
+前端测试覆盖未提交搜索、未提交时间、范围校验、分页查询及授权状态投影。浏览器验收使用模拟数据，覆盖 1920、1440、1024、768、390、320 像素宽度，并在纽约浏览器时区验证北京时间查询，不调用真实模型。
+
+界面截图（模拟账号）：[请求桌面](screenshots/requests-filters-desktop.png)、[请求手机](screenshots/requests-filters-mobile.png)、[WorkBuddy 桌面](screenshots/workbuddy-states-desktop.png)、[WorkBuddy 手机](screenshots/workbuddy-states-mobile.png)。
+
 API 测试以回复文本为主，保留原始 JSON；HTTP 200 内的 SSE `error`、异常 EOF、无效 JSON 均按失败处理。停止接收只中止浏览器等待，不能保证上游尚未计费，也不会自动重发。
 
 ### 验证与发布

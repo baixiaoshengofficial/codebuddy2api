@@ -1,6 +1,6 @@
 <script setup>
 import { computed, ref } from "vue";
-import { RefreshCw } from "@lucide/vue";
+import { RefreshCw, RotateCcw } from "@lucide/vue";
 import PageHeader from "../components/PageHeader.vue";
 import ResourceNotice from "../components/ResourceNotice.vue";
 import AuthorizationPanel from "../components/credentials/AuthorizationPanel.vue";
@@ -31,6 +31,11 @@ const { data, loading, error, refresh } = useResource(
 const { busy, run } = useAction();
 const search = ref(""),
   state = ref("");
+const filtered = computed(() => Boolean(search.value || state.value));
+function resetFilters() {
+  search.value = "";
+  state.value = "";
+}
 const rows = computed(() =>
   data.value.credentials.filter(
     (row) =>
@@ -105,7 +110,7 @@ function remove(row) {
               <small>{{ data.available }} 个可用 · 每 5 秒自动更新</small>
             </div>
           </header>
-          <div class="table-toolbar">
+          <div class="table-toolbar credential-filters">
             <input
               v-model="search"
               type="search"
@@ -119,6 +124,13 @@ function remove(row) {
               <option value="reauthorize">需要重新授权</option>
               <option value="expired">已过期</option>
             </select>
+            <button
+              class="button secondary"
+              :disabled="!filtered"
+              @click="resetFilters"
+            >
+              <RotateCcw :size="15" />重置
+            </button>
           </div>
           <div v-if="loading && !data.credentials.length" class="empty-state">
             正在加载凭证…
@@ -128,10 +140,12 @@ function remove(row) {
             :rows="rows"
             :busy="busy"
             :server-time="data.server_time"
+            :filtered="filtered"
             @lock="mode('manual', $event.filename)"
             @delete="remove"
             @test="testing = $event"
             @saved="refresh"
+            @reset="resetFilters"
           />
         </section>
         <RoutingTimeline
