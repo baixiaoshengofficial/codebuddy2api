@@ -1,108 +1,50 @@
 # CodeBuddy2API
 
-将 CodeBuddy 官方 API 包装成一个功能强大、与 OpenAI API 格式兼容的服务。本项目可以直接调用 CodeBuddy 官方 API，并为所有标准客户端提供统一的接口。
+将 CodeBuddy 接入 OpenAI 兼容接口，提供凭证管理、请求明细和 WorkBuddy 签到管理。
 
-## 🌟 功能特性
+CodeBuddy 凭证用于模型请求，WorkBuddy 凭证用于签到，两类凭证分开授权和保存。
 
-- 🔌 **OpenAI 兼容接口**：统一通过 `/codebuddy/v1` 提供模型列表、Chat Completions 和 Responses 兼容端点，可直接被 cc-switch 等工具使用。
-- 🔄 **智能响应处理**：即使 CodeBuddy 原生仅支持流式响应，本服务也能为客户端智能处理**非流式**请求，并在后端自动完成“流式转非流式”的响应包装。
-- ⚡ **高性能**：完全基于 FastAPI 和 `asyncio` 构建，支持高并发异步请求。
-- 🔐 **双重认证机制**：
-    - **服务访问认证**：通过环境变量设置密码，保护整个代理服务。
-    - **CodeBuddy 官方认证**：在后端安全地管理和使用 CodeBuddy 的 `Bearer Token`。
-- 🔄 **凭证自动切换**：支持在 `.codebuddy_creds` 目录中配置多个 CodeBuddy 认证凭证。当前凭证积分不足时，服务会切换到下一个可用凭证并重试请求。
-- 🎁 **每日自动签到**：通过独立的 WorkBuddy 授权获取签到凭证，按北京时间定点领取 Credits，并将结果推送到 Bark。
-- 🌐 **Web 管理界面**：内置一个美观、易用的 Web UI，方便用户管理凭证、测试 API 和查看服务状态。
+## 功能
 
-## 🚀 快速开始
+- Chat Completions：流式回复、非流式回复、工具调用。
+- 多凭证管理：保持当前凭证，积分不足时切换；支持手动锁定、自动续期和按条目重新授权。
+- 请求明细：查看客户端、模型、凭证、上游尝试、Tokens 和耗时，按条件筛选并导出 CSV。
+- WorkBuddy 签到：按北京时间定时执行，可手动检查，通过 Bark 推送结果。
+- 管理界面：运行概览、凭证管理、请求明细、API 测试和服务设置，支持手机访问。
+- Responses 接口：将请求转换为 Chat Completions 后返回，兼容范围见下文。
 
-### 1. 前置要求
+## Docker 部署
 
-- Python 3.8 或更高版本
-- Git
+需要 Git、Docker 和支持 `pull_policy`、`--wait` 的 Docker Compose v2 或更新版本。发布镜像为 `knighttools/codebuddy2api:latest`，目前支持 `linux/amd64`。
 
-### 2. 下载和安装
+### 安装
 
-首先，克隆本项目到本地：
 ```bash
-git clone https://github.com/baixiaoshengofficial/codebuddy2api.git
+git clone --branch main https://github.com/baixiaoshengofficial/codebuddy2api.git
 cd codebuddy2api
-```
-
-然后，运行启动脚本。此脚本会自动创建 Python 虚拟环境并安装所有必需的依赖。
-
-**Windows:**
-```bash
-start.bat
-```
-
-**Linux / macOS:**
-```bash
-python3 -m venv venv
-source venv/bin/activate
-pip install -r requirements.txt
-cd frontend && npm ci && npm run build && cd ..
-python web.py
-```
-
-### 3. 配置环境变量
-
-项目启动需要一些基本配置。请将根目录下的 `.env.example` 文件复制一份并重命名为 `.env`：
-
-```bash
 cp .env.example .env
 ```
 
-然后，用你的文本编辑器打开 `.env` 文件，**至少需要设置以下必需的变量**：
+编辑 `.env`，设置访问密码：
 
 ```dotenv
-# (必需) API服务的访问密码，客户端连接时需要提供此密码
-CODEBUDDY_PASSWORD=your_secret_password_for_this_service
+CODEBUDDY_PASSWORD=请替换为你自己的密码
 ```
 
-### 4. 添加 CodeBuddy 认证凭证
-
-为了让服务能够代理请求，你至少需要添加一个有效的 CodeBuddy 认证凭证。本项目提供了极为便捷的**自动化认证**方式。
-
-**推荐方式：使用 Web 管理界面自动获取**
-
-1.  启动服务后，使用浏览器访问 `http://127.0.0.1:8001` (或你自定义的地址)。
-2.  输入你在 `.env` 文件中设置的 `CODEBUDDY_PASSWORD` 登录管理面板。
-3.  进入 “**凭证管理**” 标签页。
-4.  点击“**添加凭证**”；已有账号过期时，点击对应条目的“**重新授权**”。
-5.  系统会自动生成一个 CodeBuddy 的官方登录链接。请点击 “**打开链接**” 按钮。
-6.  在新打开的 CodeBuddy 页面中完成登录授权。
-7.  **完成！** 登录成功后，请关闭登录页面。本服务会自动检测到登录状态，并为你获取、解析和保存新的认证凭证。你只需点击 “**刷新列表**” 即可看到新添加的凭证。
-
-
-### 5. 启动服务
-
-一切准备就绪后，再次运行启动脚本即可启动服务：
-
-**Windows:**
-```bash
-start.bat
-```
-
-**直接运行:**
-```bash
-# 确保你已在虚拟环境中 (source venv/bin/activate)
-python web.py
-```
-
-服务启动后，你就可以开始使用了！
-
-### 6. Docker 部署与更新（推荐）
-
-需要 Docker 和 Docker Compose v2 或更新版本。目前发布镜像支持 `linux/amd64`。
-完成 `.env` 配置后，在项目目录运行：
+启动服务：
 
 ```bash
 docker compose up -d --wait
 ```
 
-默认 Compose 使用 `knighttools/codebuddy2api:latest`，每次 `up` 都检查并拉取最新镜像。
-更新时运行：
+打开 `http://127.0.0.1:8001`，使用访问密码登录。部署在远程服务器时，将地址换为服务器地址。
+
+```bash
+curl -fsS http://127.0.0.1:8001/health
+docker compose logs --tail=100
+```
+
+### 更新
 
 ```bash
 git pull origin main
@@ -110,11 +52,18 @@ docker compose pull
 docker compose up -d --wait
 ```
 
-`git pull` 更新仓库文件；镜像拉取和容器重建由 Compose 完成。
-`docker compose restart` 只重启原容器，不能用于更新版本。
-配置、请求数据库和两类凭证保存在宿主机挂载目录中，重建容器会保留这些数据。
+默认配置会检查并拉取 `latest`。`git pull` 更新仓库文件，拉取镜像和重建容器由 Compose 完成。`docker compose restart` 只重启现有容器，不更新镜像。
 
-需要从当前源码构建时，叠加独立配置：
+### 从源码构建镜像
+
+在已克隆并配置好 `.env` 的项目目录中执行：
+
+```bash
+CODEBUDDY_REVISION="$(git rev-parse HEAD)" \
+  docker compose -f docker-compose.yml -f docker-compose.build.yml up -d --build --wait
+```
+
+这会构建前端和后端，使用本地镜像 `codebuddy2api:local`。更新源码后，继续使用同一组配置文件：
 
 ```bash
 git pull origin main
@@ -122,200 +71,237 @@ CODEBUDDY_REVISION="$(git rev-parse HEAD)" \
   docker compose -f docker-compose.yml -f docker-compose.build.yml up -d --build --wait
 ```
 
-此方式构建 `codebuddy2api:local`，包含前端构建，不会拉取发布镜像覆盖本地源码。
-后续更新继续使用同一组 `-f` 参数。修改前端后重新构建即可，无需手动复制静态文件。
+### 数据目录
 
-### 7. 一键源码部署到调试服务器
+默认 Compose 将以下目录挂载到容器，重建容器后仍会保留：
 
-仓库提供了 `Makefile` 和 `scripts/deploy_docker.sh`，可将当前代码打包上传到服务器，再叠加 `docker-compose.build.yml` 构建并启动服务。
+| 宿主机目录 | 内容 |
+| --- | --- |
+| `config/` | 管理设置、请求数据库、签到记录 |
+| `.codebuddy_creds/` | CodeBuddy 凭证、当前选择和冷却状态 |
+| `.workbuddy_creds/` | WorkBuddy 凭证 |
+
+迁移前先停止服务，再复制这三个目录和 `.env`。这些文件包含访问密码或账号凭证，不应提交到 Git。
+
+容器监听 `8001`，对外端口在 `docker-compose.yml` 的 `ports` 中设置。
+
+## 凭证管理
+
+### 添加账号
+
+1. 登录管理端，进入“凭证管理”。
+2. 选择 CodeBuddy 或 WorkBuddy，点击“添加凭证”。
+3. 点击“打开授权页”，在浏览器中完成对应账号的登录。
+4. 返回管理端，保存成功后列表会自动刷新。
+
+WorkBuddy 账号只用于签到，不参与模型请求的凭证切换。默认每天北京时间 `11:00` 执行签到，也可点击“立即签到”。账号条目分别显示授权状态、到期时间、签到结果和检查时间。
+
+### 重新授权
+
+过期或需要重新授权的条目会显示“重新授权”按钮。使用原账号登录后，服务更新原凭证，保留文件名和 CodeBuddy 的手动选择，不新增条目。登录账号不匹配时会提示错误，原凭证保持不变。
+
+重新授权等待最长 15 分钟。等待期间服务重启，需要重新发起授权。
+
+### 自动切换规则
+
+- 自动模式保持使用当前可用凭证，不按请求轮询账号。
+- 上游明确返回积分不足时，该凭证冷却 5 分钟。回复尚未开始生成时，当前请求可切换到下一张可用凭证。
+- 回复已开始生成后，不重发当前请求，切换只影响后续请求。
+- 手动锁定模式不自动切换。失效且无法续期的凭证需要重新授权。
+- 连接中断、超时和普通限流不自动重发模型请求。
+
+旧配置 `CODEBUDDY_ROTATION_COUNT` 已不再生效。
+
+## 请求明细
+
+可按今天、近 24 小时、近 7 天或自定义时间查看记录，时间均采用北京时间。自定义范围最多 366 天。
+
+- 模型、来源、凭证和状态下拉筛选即时生效。桌面端排成一行，手机端分为两列。
+- 搜索按回车或点击“搜索”后生效；自定义日期点击“应用时间范围”后生效。
+- 自动刷新和 CSV 导出使用已提交的条件，编辑中的搜索和日期不会改变查询。
+- 支持重置筛选，每页显示 20、50 或 100 条；前台每 5 秒刷新一次，隐藏页面暂停刷新。
+- “查看详情”可查看每次上游尝试、凭证切换和错误信息。长文本截断显示，完整字段可在详情中查看。
+
+记录保存在本地 SQLite 中，按最近约 50,000 条清理，请求和回复预览各保留最多 500 个字符。
+
+“上游尝试次数”记录本服务发送的模型请求次数，不等于官方扣分记录数；估算 Tokens 也不能用于核对账单。管理端的 API 测试和凭证模型测试会调用真实模型，可能消耗积分。
+
+## 界面
+
+以下截图使用模拟账号和请求。
+
+![请求明细](docs/screenshots/requests-filters-desktop.png)
+
+[请求明细（手机）](docs/screenshots/requests-filters-mobile.png) · [手机日期筛选](docs/screenshots/requests-custom-mobile.png) · [WorkBuddy 账号](docs/screenshots/workbuddy-states-desktop.png) · [WorkBuddy（手机）](docs/screenshots/workbuddy-states-mobile.png)
+
+## 接口使用
+
+客户端配置：
+
+| 配置项 | 值 |
+| --- | --- |
+| Base URL | `http://127.0.0.1:8001/codebuddy/v1` |
+| API Key | 管理端当前的访问密码 |
+| 模型 | 从 `/codebuddy/v1/models` 返回的列表中选择 |
+
+聊天和管理接口使用 `Authorization: Bearer <访问密码>`。模型列表、健康检查和 GET 连通性探测无需认证。
+
+获取模型列表：
 
 ```bash
-DEPLOY_HOST=192.168.100.3 \
-DEPLOY_USER=root \
-DEPLOY_PASSWORD='你的SSH密码' \
-CODEBUDDY_SITE=china \
-make deploy
+curl -sS http://127.0.0.1:8001/codebuddy/v1/models
 ```
 
-部署脚本会读取本地 `.env` 中的 `CODEBUDDY_PASSWORD` 并写入服务器 `.env`。默认部署目录为 `/opt/codebuddy2api`，服务地址为 `http://192.168.100.3:8001`。如果服务器尚未安装 Docker，可运行 `DEPLOY_PASSWORD='你的SSH密码' make deploy-install-docker` 自动安装。常用调试命令：`make ps`、`make logs`、`make restart`、`make health`。
+发送流式请求，将 `YOUR_PASSWORD` 和 `MODEL_ID` 换成实际值：
 
-## ⚙️ API 使用
-
-### 认证
-
-除模型列表外，对本服务的 API 请求都需要使用你在 `.env` 文件里设置的 `CODEBUDDY_PASSWORD`。对 OpenAI SDK 来说，这个值就是 `api_key`；对 HTTP 请求来说，它就是 Bearer Token。`GET /codebuddy/v1/models` 可直接访问，方便 cc-switch 等客户端发现模型。
-
-`Authorization: Bearer your_secret_password_for_this_service`
-
-外部客户端统一使用 `/codebuddy/v1`，例如 `http://192.168.100.3:8001/codebuddy/v1`。
-
-### cc-switch / Codex 配置
-
-在 cc-switch 中添加自定义 OpenAI 兼容 Provider 时：
-
-- API Key：填写 `.env` 中的 `CODEBUDDY_PASSWORD`。
-- Endpoint URL：填写 `http://你的服务地址:8001/codebuddy/v1`。
-- Fetch Models：cc-switch 会请求 `GET /codebuddy/v1/models`，本服务会返回 OpenAI 兼容模型列表。
-- Codex 使用：本服务同时提供 `/codebuddy/v1/chat/completions` 和轻量 `/codebuddy/v1/responses` 兼容端点；如果使用 cc-switch 的 Chat Completions 本地路由，请让它转到 `/codebuddy/v1/chat/completions`。
-
-### 客户端集成示例
-
-你可以将任何支持 OpenAI API 的客户端指向本服务。
-
-**Python 客户端:**
-```python
-import openai
-
-client = openai.OpenAI(
-    api_key="your_secret_password_for_this_service",
-    base_url="http://192.168.100.3:8001/codebuddy/v1"
-)
-
-# 非流式请求
-response = client.chat.completions.create(
-    model="<model-id-from-/codebuddy/v1/models>",
-    messages=[
-        {"role": "user", "content": "你好，2+2等于几？"}
-    ]
-)
-print(response.choices[0].message.content)
-
-# 流式请求
-stream = client.chat.completions.create(
-    model="<model-id-from-/codebuddy/v1/models>",
-    messages=[
-        {"role": "user", "content": "写一个Python的Hello World脚本"}
-    ],
-    stream=True
-)
-for chunk in stream:
-    print(chunk.choices[0].delta.content or "", end="")
-
-```
-
-**curl 命令行示例:**
 ```bash
-# 非流式请求
-curl -sS -X POST 'http://192.168.100.3:8001/codebuddy/v1/chat/completions' \
-  -H 'Authorization: Bearer your_secret_password_for_this_service' \
+curl -N http://127.0.0.1:8001/codebuddy/v1/chat/completions \
+  -H 'Authorization: Bearer YOUR_PASSWORD' \
   -H 'Content-Type: application/json' \
-  --data-raw '{"model":"<model-id-from-/codebuddy/v1/models>","messages":[{"role":"user","content":"Hello, what is 2+2?"}]}'
-
-# 流式请求
-curl -sS -X POST 'http://192.168.100.3:8001/codebuddy/v1/chat/completions' \
-  -H 'Authorization: Bearer your_secret_password_for_this_service' \
-  -H 'Content-Type: application/json' \
-  --data-raw '{"model":"<model-id-from-/codebuddy/v1/models>","messages":[{"role":"user","content":"Write a Python hello world script"}],"stream":true}'
+  -d '{"model":"MODEL_ID","messages":[{"role":"user","content":"你好"}],"stream":true}'
 ```
 
-## 📝 API 端点
+非流式请求将 `stream` 改为 `false`。cc-switch 等客户端的端点同样填写上述 Base URL，API Key 填写本服务访问密码。
 
-- `GET /codebuddy/v1`: 轻量探测接口，供 cc-switch 等工具测速。
-- `GET /codebuddy/v1/models`: OpenAI 兼容模型列表接口，按当前 `CODEBUDDY_SITE` 动态获取 CodeBuddy 官方模型列表。
-- `GET /codebuddy/v1/chat/completions`: 轻量探测接口，供 cc-switch 等工具测速。
-- `POST /codebuddy/v1/chat/completions`: OpenAI 兼容聊天接口。
-- `GET /codebuddy/v1/responses`: 轻量探测接口，供 cc-switch 等工具测速。
-- `POST /codebuddy/v1/responses`: 最小 Responses 兼容接口，用于 Codex/cc-switch 连通性探测和简单请求。
-- `GET /codebuddy/v1/credentials`: （需要认证）在 Web UI 中用于列出所有凭证。
-- `POST /codebuddy/v1/credentials/set-mode`: （需要认证）切换积分不足时自动切换或锁定指定凭证。
-- `GET /codebuddy/v1/credentials/current`: （需要认证）查看当前使用的凭证。
-- `POST /codebuddy/v1/credentials/delete`: （需要认证）删除指定凭证。
-- `GET /api/checkin`: （需要认证）查看自动签到计划及逐账号状态。
-- `POST /api/checkin/run`: （需要认证）立即检查并领取所有账号的待领签到奖励。
-- `GET /codebuddy/auth/start`: （需要认证）启动 CodeBuddy 授权。
-- `POST /codebuddy/auth/poll`: （需要认证）轮询 CodeBuddy 授权结果并保存凭证。
-- `GET /workbuddy/auth/start`: （需要认证）启动 WorkBuddy 签到授权。
-- `POST /workbuddy/auth/poll`: （需要认证）轮询 WorkBuddy 授权结果并保存凭证。
-- `GET /workbuddy/credentials`: （需要认证）列出已授权的 WorkBuddy 签到账号。
-- `DELETE /workbuddy/credentials/{filename}`: （需要认证）按文件名删除指定 WorkBuddy 凭证。
-- `POST /workbuddy/credentials/delete`: 旧接口仅支持 `{"filename":"...json"}`；仅传 `index` 返回 409，避免列表变化时删错账号。
+### 主要端点
 
-- `GET /health`: 服务的健康检查端点。
+| 方法 | 路径 | 用途 |
+| --- | --- | --- |
+| GET | `/health` | 健康检查 |
+| GET | `/codebuddy/v1/models` | 模型列表 |
+| POST | `/codebuddy/v1/chat/completions` | 对话请求 |
+| POST | `/codebuddy/v1/responses` | Responses 适配接口 |
+| GET | `/api/console/status` | 服务版本和构建提交号 |
+| GET | `/api/console/overview` | 运行概览 |
+| GET | `/api/console/credentials` | CodeBuddy 凭证与切换记录 |
+| POST | `/api/console/credentials/mode` | 自动模式或手动锁定 |
+| DELETE | `/api/console/credentials/{filename}` | 删除 CodeBuddy 凭证 |
+| GET | `/api/console/requests` | 请求列表 |
+| GET | `/api/console/requests/{id}` | 请求详情与逐次尝试 |
+| GET | `/api/console/requests/export` | 按筛选条件导出 CSV |
+| GET | `/workbuddy/credentials` | WorkBuddy 账号列表 |
+| DELETE | `/workbuddy/credentials/{filename}` | 删除指定 WorkBuddy 凭证 |
+| GET | `/api/checkin` | 签到计划和结果 |
+| POST | `/api/checkin/run` | 执行签到检查 |
+| GET / POST | `/api/settings` | 读取或保存设置 |
 
-两类产品的普通授权与重新授权轮询成功后只返回保存结果，不返回 access token、refresh token 或上游原始响应。保存失败返回 HTTP 500 和 `save_failed`；上游响应缺少 Token 返回 HTTP 502；等待授权返回 HTTP 400 和 `authorization_pending`。
+两类账号的授权端点相同，`{product}` 为 `codebuddy` 或 `workbuddy`：
 
-## 🔧 项目结构
+| 方法 | 路径 | 参数 |
+| --- | --- | --- |
+| GET | `/{product}/auth/start` | 无 |
+| POST | `/{product}/auth/poll` | `auth_state` |
+| POST | `/{product}/auth/reauthorize` | `filename` |
+| POST | `/{product}/auth/reauthorize/poll` | `auth_state` |
 
-```
-codebuddy2api/
-├── src/                           # 源代码目录
-│   ├── auth.py                    # 服务访问认证模块
-│   ├── codebuddy_api_client.py    # 封装了与CodeBuddy官方API的通信
-│   ├── codebuddy_auth_router.py   # CodeBuddy OAuth2 认证路由
-│   ├── codebuddy_token_manager.py # CodeBuddy凭证加载与切换管理器
-│   ├── checkin_manager.py          # WorkBuddy 自动签到管理器
-│   ├── workbuddy_auth_router.py    # WorkBuddy 签到授权
-│   ├── workbuddy_token_manager.py  # WorkBuddy 签到凭证存储
-│   ├── codebuddy_router.py        # 核心API路由 (v1) - 已重构优化
-│   ├── frontend_router.py         # Web管理界面的路由
-│   ├── settings_router.py         # 设置管理路由
-│   ├── usage_stats_manager.py     # 使用统计管理器
-│   └── keyword_replacer.py        # 关键词替换模块
-├── frontend/
-│   ├── src/                        # Vue 管理端源码
-│   └── vite.config.js              # Vite 构建配置
-├── .codebuddy_creds/              # 存放CodeBuddy凭证的目录 (Git会忽略其中的文件)
-├── web.py                         # FastAPI服务主入口
-├── config.py                      # 环境变量配置管理
-├── requirements.txt               # Python依赖列表
-├── .env.example                   # 环境变量示例文件
-├── start.bat                      # Windows一键启动脚本
-├── docker-compose.yml             # Docker Compose 配置
-├── Dockerfile                     # Docker 镜像构建文件
-├── entrypoint.sh                  # Docker 容器入口脚本
-└── README.md                      # 本文档
-```
+POST 参数通过 JSON 请求体提交。授权保存成功返回 `saved: true`，不返回 Token；等待登录返回 `400 authorization_pending`，保存失败返回 `500 save_failed`。
 
-## 🧭 架构与维护
+`GET /codebuddy/v1`、`GET /codebuddy/v1/chat/completions` 和 `GET /codebuddy/v1/responses` 用于连通性检查，不发送聊天请求。完整参数可在服务启动后的 `/docs` 查看。
 
-CodeBuddy 与 WorkBuddy 是两个独立的账号域：前者用于 OpenAI 兼容 API 的凭证切换，后者仅用于每日签到。管理端也按这两个账号域分别展示、授权和操作。
+### Responses 兼容范围
 
-核心模块的职责边界、运行期副作用约束和本地验证流程见 [docs/architecture.md](docs/architecture.md)。日常改动请遵循“路由负责 HTTP 编排、管理器负责领域规则、共享工具不依赖具体产品”的原则，避免在路由中混入文件读写或复杂业务逻辑。
+当前 Responses 接口通过 Chat Completions 适配，主要用于文本请求和客户端连通性检查，不是 OpenAI Responses API 的完整实现。`stream: true` 会在上游回复收齐后发送事件，并非逐字转发。
 
-### 开发验证
+## 配置
+
+首次启动读取 `.env` 和环境变量。管理端保存的可编辑设置写入 `config/config.json`，后续启动时覆盖对应环境变量。
+
+| 变量 | 默认值 | 说明 |
+| --- | --- | --- |
+| `CODEBUDDY_PASSWORD` | 必填 | 管理登录和 API 访问密码 |
+| `CODEBUDDY_SITE` | `china` | `china` 为国内站，`international` 为国际站 |
+| `CODEBUDDY_AUTO_CHECKIN` | `true` | WorkBuddy 自动签到 |
+| `CODEBUDDY_CHECKIN_TIME` | `11:00` | 签到时间，北京时间 `HH:MM` |
+| `CODEBUDDY_BARK_URL` | 空 | 签到结果推送地址，留空关闭 |
+| `CODEBUDDY_HOST` | `127.0.0.1` | 直接运行 Python 时的监听地址 |
+| `CODEBUDDY_PORT` | `8001` | 直接运行 Python 时的监听端口 |
+| `CODEBUDDY_CREDS_DIR` | `.codebuddy_creds` | CodeBuddy 凭证目录 |
+| `WORKBUDDY_CREDS_DIR` | `.workbuddy_creds` | WorkBuddy 凭证目录 |
+| `CODEBUDDY_LOG_LEVEL` | `INFO` | 日志级别 |
+
+访问密码、站点、签到开关、签到时间和 Bark 地址可在“服务设置”中修改并立即生效。监听地址、端口、日志级别及凭证目录在管理端只读，修改启动配置后需重启。
+
+Docker 容器使用固定监听端口和卷路径。调整对外端口或数据目录时，同步修改 Compose 配置。
+
+## 本地开发
+
+使用 Python 3.11、Node.js 22.8 或更新版本。先克隆项目并按部署章节创建 `.env`。
 
 ```bash
-venv/bin/python -m unittest discover -s tests -v
-venv/bin/python -m compileall -q src web.py config.py
-cd frontend && npm run build
+python3 -m venv venv
+source venv/bin/activate
+python -m pip install -r requirements.txt
+cd frontend
+npm ci
+npm run build
+cd ..
+python web.py
 ```
 
-## ⚙️ 配置选项
+Windows 使用 `python` 创建虚拟环境，激活命令为 `venv\Scripts\activate`。前端构建完成后，也可运行 `start.bat` 启动后端。
 
-启动配置由 `.env` 或环境变量提供。管理端只允许修改可热加载的设置，改动会
-立即生效并按需写入 `config/config.json`。监听地址、端口、日志级别和凭证目录
-在管理端只读，始终由启动配置管理，不会被管理端保存的快照覆盖。
+开发前端时，保持后端运行，另开终端执行：
 
-| 环境变量 | 默认值 | 说明 |
-| ---------------------- | --------------------- | ---------------------------------------------------------- |
-| `CODEBUDDY_PASSWORD` | - | **(必需)** 访问此API服务的密码。 |
-| `CODEBUDDY_HOST` | `127.0.0.1` | 服务监听的主机地址。 |
-| `CODEBUDDY_PORT` | `8001` | 服务监听的端口。 |
-| `CODEBUDDY_SITE` | `china` | CodeBuddy 站点，可选 `international`（国际站）或 `china`（国内站）；API 端点会按站点自动选择。 |
-| `CODEBUDDY_LOG_LEVEL` | `INFO` | 日志级别，可选 `DEBUG`, `INFO`, `WARNING`, `ERROR`。 |
-| `CODEBUDDY_AUTO_CHECKIN` | `true` | 是否自动检查并领取每日签到奖励。 |
-| `CODEBUDDY_CHECKIN_TIME` | `11:00` | 每日自动签到时间（北京时间 HH:MM）。 |
-| `CODEBUDDY_BARK_URL` | 空 | 签到完成后推送结果的 Bark URL；留空则不推送。 |
+```bash
+cd frontend
+npm run dev
+```
 
-自动模式会保持使用当前 CodeBuddy 凭证；上游明确返回积分不足时，服务在 5 分钟内跳过该凭证，切换到下一张可用凭证并重试。旧版 `CODEBUDDY_ROTATION_COUNT` 配置已不再生效。
+Vite 将接口请求转发到 `127.0.0.1:8001`。
 
-对话请求遇到连接中断或超时会直接返回错误，不自动重新发送给上游，因为上游可能已经处理并扣除积分。请求明细中的“上游请求次数”（旧版显示 `Attempts`）记录实际上游发送次数；只有明确的积分不足且回复尚未开始生成，才会触发凭证切换和再次发送。
+### 验证
 
-CodeBuddy 和 WorkBuddy 凭证分别固定存放在 `.codebuddy_creds` 与
-`.workbuddy_creds`。Docker 部署时如需从宿主机查看或备份凭证，请修改
-`docker-compose.yml` 的卷来源路径，容器内目标路径保持不变。
+在已激活的 Python 虚拟环境中执行：
 
-## 🐛 故障排除
+```bash
+python -m pip install pytest
+python -m pytest -q
+python -m compileall -q src web.py config.py
+cd frontend
+npm test
+npm run build
+```
 
-- **"No valid CodeBuddy credentials found"**:
-  - 确保你已经在 `.codebuddy_creds` 目录下添加了至少一个有效的凭证 JSON 文件。
-  - 推荐使用 Web UI 添加，以确保格式正确。
+后端测试使用临时凭证和模拟上游，覆盖认证、续期、积分耗尽切换、签到和请求记录。前端测试覆盖流式解析、筛选提交、时间范围和授权状态。
 
-- **"API error: 401" / "API error: 403" (来自 CodeBuddy)**:
-  - 这通常意味着你的 CodeBuddy `Bearer Token` 无效或已过期。请通过官网重新获取一个新的 Token，并在 Web UI 中更新。
+### 目录
 
-- **"Invalid password"**:
-  - 这意味着你访问本服务时，请求头中提供的 Bearer Token 与你在 `.env` 文件中设置的 `CODEBUDDY_PASSWORD` 不匹配。
+| 路径 | 内容 |
+| --- | --- |
+| `web.py` | FastAPI 入口 |
+| `config.py` | 配置加载和持久化 |
+| `src/chat/` | 上游请求、流式处理和协议转换 |
+| `src/console/` | 管理接口、查询与凭证操作 |
+| `src/*_auth_router.py` | 账号授权与保存适配 |
+| `src/*_token_manager.py` | 凭证存储与选择 |
+| `frontend/src/` | Vue 管理端 |
+| `tests/`、`frontend/tests/` | 后端和前端测试 |
+| `scripts/` | 部署脚本 |
 
-- **需要查看详细日志**:
-  - 在 `.env` 文件中设置 `CODEBUDDY_LOG_LEVEL=DEBUG`，然后重启服务。
+模块划分和实现说明见 [docs/architecture.md](docs/architecture.md)。
+
+## 常见问题
+
+**更新后仍是旧界面**
+
+先检查 `git remote -v` 是否指向本仓库，再按对应的镜像部署或源码构建命令更新。只执行 `git pull` 或 `restart` 不会重建现有镜像。更新完成后刷新管理页，有构建信息时页面顶部会显示提交号。
+
+**提示凭证失效**
+
+在对应产品的条目上点击“重新授权”，使用原账号登录。WorkBuddy 授权不能代替 CodeBuddy 授权。
+
+**修改了 `.env` 密码却无法登录**
+
+如果之前在管理端改过密码，`config/config.json` 中保存的密码会覆盖环境变量。客户端和管理端都应使用当前生效的访问密码。
+
+**前端返回 503**
+
+本地运行时先在 `frontend/` 执行 `npm ci` 和 `npm run build`。Docker 构建会自动执行这两步。
+
+**请求失败是否会自动重试**
+
+只有明确的积分不足、且回复尚未开始时才会切换凭证重发模型请求。连接错误和超时不会自动重发。自动续期与签到各有独立的重试逻辑。
+
+**旧页面删除 WorkBuddy 凭证返回 409**
+
+旧版按序号删除已停用。刷新管理页后，删除操作会按文件名定位条目。
