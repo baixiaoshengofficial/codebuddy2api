@@ -4,7 +4,7 @@ Go 编写的 CodeBuddy OpenAI 兼容 API 代理，账号授权、请求记录和
 
 ## 安装
 
-需要 Git、Docker 和 Docker Compose v2。镜像为 `knighttools/codebuddy2api:latest`，目前只发布 `linux/amd64`。
+需要 Git、Docker 和 Docker Compose v2。镜像为 `knighttools/codebuddy2api:latest`，支持 `linux/amd64` 和 `linux/arm64`，拉取时自动匹配架构。
 
 ```bash
 git clone --branch main https://github.com/baixiaoshengofficial/codebuddy2api.git

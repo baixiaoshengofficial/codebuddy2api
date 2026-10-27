@@ -37,6 +37,8 @@ help:
 	@echo "  make frontend-dev            Start the Vue development server"
 	@echo "  make frontend-build          Build the Vue admin console"
 	@echo "  make check                   Build frontend and run local checks"
+	@echo "  make image-test              Test amd64 and arm64 container builds"
+	@echo "  make image-release           Test both architectures and publish latest"
 	@echo ""
 	@echo "Examples:"
 	@echo "  DEPLOY_PASSWORD='***' make deploy"
@@ -108,3 +110,14 @@ remote:
 	else \
 		ssh -o StrictHostKeyChecking=accept-new "$$DEPLOY_USER@$$DEPLOY_HOST" "$$CMD"; \
 	fi
+
+IMAGE ?= knighttools/codebuddy2api:latest
+PLATFORMS ?= linux/amd64,linux/arm64
+IMAGE_REVISION ?= $(shell git rev-parse HEAD)
+
+.PHONY: image-test image-release
+image-test:
+	@docker buildx build --platform $(PLATFORMS) --target test --output=type=cacheonly --build-arg CODEBUDDY_REVISION=$(IMAGE_REVISION) .
+
+image-release: image-test
+	@docker buildx build --platform $(PLATFORMS) --build-arg CODEBUDDY_REVISION=$(IMAGE_REVISION) -t $(IMAGE) --push .

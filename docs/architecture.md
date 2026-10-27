@@ -87,3 +87,15 @@ CODEBUDDY_REVISION="$(git rev-parse HEAD)" \
 镜像在构建阶段编译 Go 与前端，运行阶段仅带二进制、静态页面和系统证书。容器仍以 UID 1001 运行。Compose 在容器内固定监听 `0.0.0.0`，`CODEBUDDY_PORT` 同步用于容器端口和宿主机映射。健康检查使用 `codebuddy2api healthcheck`；自定义 Compose 中的旧 Python 健康检查需要同步替换。
 
 服务的 `/docs` 提供参数说明，`/openapi.json` 提供接口清单。界面截图见 [README](../README.md)。
+
+## 多架构镜像
+
+`latest` 同时包含 `linux/amd64` 和 `linux/arm64`，Compose 无需指定平台。前端在构建机原生架构编译，Go 后端按目标架构交叉编译；SQLite 保持启用 CGO，并使用对应的 C 编译器。
+
+发布前执行两种架构的测试和启动检查，再推送同一个标签：
+
+```bash
+make image-release
+```
+
+只验证、不发布时执行 `make image-test`。需要支持多平台的 Docker Buildx。测试阶段在目标架构的 Debian 环境执行现有 Go 测试，并启动实际服务检查 `/health`；ARM64 可使用 BuildKit 的 QEMU 执行。测试二进制和临时数据不会进入发布镜像。
