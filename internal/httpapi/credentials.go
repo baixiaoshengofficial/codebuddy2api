@@ -119,7 +119,11 @@ func (s *Server) mode(w http.ResponseWriter, r *http.Request) {
 	}
 	logFailure(s.d.Logs.Switch(currentName(before), currentName(after), reason, nil))
 	if strings.HasSuffix(r.URL.Path, "set-mode") {
-		writeJSON(w, 200, credential.Data{"mode": command.Mode, "manual_selected_index": after["current_index"], "message": "Switched to " + command.Mode + " mode"})
+		var manualIndex any
+		if command.Mode == "manual" {
+			manualIndex = after["current_index"]
+		}
+		writeJSON(w, 200, credential.Data{"mode": command.Mode, "manual_selected_index": manualIndex, "message": "Switched to " + command.Mode + " mode"})
 		return
 	}
 	writeJSON(w, 200, after)
@@ -209,7 +213,7 @@ func (s *Server) current(w http.ResponseWriter, r *http.Request) {
 	rows := snapshot["credentials"].([]credential.Data)
 	for _, row := range rows {
 		if row["is_current"] == true {
-			writeJSON(w, 200, credential.Data{"status": snapshot["mode"], "mode": snapshot["mode"], "index": row["index"], "filename": row["filename"], "user_id": row["user_id"], "usage_count": 0})
+			writeJSON(w, 200, credential.Data{"status": snapshot["mode"], "mode": snapshot["mode"], "index": row["index"], "filename": row["filename"], "user_id": row["user_id"], "usage_count": snapshot["usage_count"]})
 			return
 		}
 	}

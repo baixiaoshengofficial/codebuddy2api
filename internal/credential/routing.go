@@ -43,6 +43,7 @@ type Router struct {
 	repo        RoutingRepository
 	persistence StateStore
 	state       RoutingState
+	usageCount  int64
 	now         func() time.Time
 	Cooldown    time.Duration
 }
@@ -103,6 +104,9 @@ func (r *Router) save(next RoutingState, records []Record) error {
 	}
 	if err := r.persistence.Save(next); err != nil {
 		return err
+	}
+	if r.state.Current != next.Current {
+		r.usageCount = 0
 	}
 	r.state = next
 	return nil
@@ -174,6 +178,7 @@ func (r *Router) Select(filename string, index *int) (Selection, error) {
 				return Selection{}, err
 			}
 		}
+		r.usageCount++
 		return Selection{row, i, true}, nil
 	}
 	if usable > 0 {
@@ -329,5 +334,5 @@ func (r *Router) Snapshot() (Data, error) {
 	for i := range rows {
 		rows[i]["is_current"] = i == active
 	}
-	return Data{"mode": r.state.Mode, "credentials": rows, "current_index": current, "next_index": next, "available": len(eligible), "cooldown_seconds": int(r.Cooldown.Seconds()), "server_time": r.now().UnixMilli()}, nil
+	return Data{"mode": r.state.Mode, "credentials": rows, "current_index": current, "next_index": next, "available": len(eligible), "cooldown_seconds": int(r.Cooldown.Seconds()), "usage_count": r.usageCount, "server_time": r.now().UnixMilli()}, nil
 }

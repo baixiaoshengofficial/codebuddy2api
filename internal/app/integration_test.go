@@ -373,3 +373,48 @@ func TestHTTPExpiredCredentialRenewalConcurrency(t *testing.T) {
 		})
 	}
 }
+
+func TestLegacyCredentialUsageAndModeCompatibility(t *testing.T) {
+	var calls atomic.Int32
+	a, _ := setup(t, doer(func(r *http.Request) (*http.Response, error) { calls.Add(1); return response(200, answer), nil }))
+	for _, name := range []string{"a.json", "b.json"} {
+		if err := a.Code.Put(name, data{"bearer_token": name}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	request := `{"model":"m","messages":[{"role":"user","content":"hello"}]}`
+	for i := 0; i < 2; i++ {
+		if w := call(a, "POST", "/codebuddy/v1/chat/completions", request, true); w.Code != 200 {
+			t.Fatal(w.Code, w.Body.String())
+		}
+	}
+	for i := 0; i < 2; i++ {
+		current := decode(t, call(a, "GET", "/codebuddy/v1/credentials/current", "", true))
+		if current.Number("usage_count") != 2 || current.Text("filename") != "a.json" {
+			t.Fatal(current)
+		}
+	}
+	explicit := `{"model":"m","messages":[{"role":"user","content":"hello"}],"_credential_filename":"b.json"}`
+	if w := call(a, "POST", "/codebuddy/v1/chat/completions", explicit, true); w.Code != 200 {
+		t.Fatal(w.Body.String())
+	}
+	current := decode(t, call(a, "GET", "/codebuddy/v1/credentials/current", "", true))
+	if current.Number("usage_count") != 2 || current.Text("filename") != "a.json" || calls.Load() != 3 {
+		t.Fatal(current, calls.Load())
+	}
+	manual := decode(t, call(a, "POST", "/codebuddy/v1/credentials/set-mode", `{"mode":"manual","index":1}`, true))
+	if manual.Number("manual_selected_index") != 1 {
+		t.Fatal(manual)
+	}
+	auto := decode(t, call(a, "POST", "/codebuddy/v1/credentials/set-mode", `{"mode":"auto"}`, true))
+	if auto["manual_selected_index"] != nil {
+		t.Fatal(auto)
+	}
+	if w := call(a, "POST", "/codebuddy/v1/chat/completions", request, true); w.Code != 200 {
+		t.Fatal(w.Body.String())
+	}
+	current = decode(t, call(a, "GET", "/codebuddy/v1/credentials/current", "", true))
+	if current.Number("usage_count") != 1 || current.Text("filename") != "b.json" {
+		t.Fatal(current)
+	}
+}
