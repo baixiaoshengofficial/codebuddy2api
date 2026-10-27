@@ -10,6 +10,8 @@ import (
 	"net"
 	"net/http"
 	"time"
+
+	"github.com/baixiaoshengofficial/codebuddy2api/internal/jsonvalue"
 )
 
 type Doer interface {
@@ -43,7 +45,7 @@ func JSON(ctx context.Context, client Doer, method, endpoint string, headers htt
 		return nil, response.StatusCode, err
 	}
 	result := map[string]any{}
-	if err = json.Unmarshal(data, &result); err != nil || result == nil {
+	if err = jsonvalue.Unmarshal(data, &result); err != nil || result == nil {
 		return nil, response.StatusCode, fmt.Errorf("invalid upstream response (HTTP %d)", response.StatusCode)
 	}
 	return result, response.StatusCode, nil

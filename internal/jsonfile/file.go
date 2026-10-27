@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+
+	"github.com/baixiaoshengofficial/codebuddy2api/internal/jsonvalue"
 )
 
 func Read(path string, target any) error {
@@ -12,7 +14,7 @@ func Read(path string, target any) error {
 	if err != nil {
 		return err
 	}
-	return json.Unmarshal(data, target)
+	return jsonvalue.Unmarshal(data, target)
 }
 
 // Write leaves the previous file intact on serialization or write failure.

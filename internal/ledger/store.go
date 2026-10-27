@@ -3,6 +3,7 @@ package ledger
 
 import (
 	"database/sql"
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -134,6 +135,12 @@ type Finish struct {
 func token(usage map[string]any, keys ...string) (int64, bool) {
 	for _, key := range keys {
 		switch v := usage[key].(type) {
+		case json.Number:
+			if n, err := v.Int64(); err == nil {
+				return n, true
+			} else if n, err := v.Float64(); err == nil {
+				return int64(n), true
+			}
 		case float64:
 			return int64(v), true
 		case int64:

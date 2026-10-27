@@ -346,3 +346,22 @@ func TestReadinessSkipsRevokedSession(t *testing.T) {
 		t.Fatal(selected, err, calls)
 	}
 }
+
+func TestStoredNumericIdentityRoundTrip(t *testing.T) {
+	repo := testRepo(t)
+	put(t, repo, "uid.json", Data{"bearer_token": "token", "user_info": Data{"uid": json.Number("1234567890123456789")}})
+	loaded, err := repo.Get("uid.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if Clone(loaded).Object("user_info").Text("uid") != "1234567890123456789" {
+		t.Fatal("stored identity rounded")
+	}
+}
+
+func TestDecimalJSONExpiryRemainsEffective(t *testing.T) {
+	d := Data{"bearer_token": "old", "created_at": json.Number("1.0"), "expires_in": json.Number("600.0")}
+	if !Expired(d, testNow) {
+		t.Fatal("decimal duration bypassed expiration")
+	}
+}

@@ -10,12 +10,14 @@ import (
 	"time"
 
 	requestid "github.com/baixiaoshengofficial/codebuddy2api/internal/id"
+
+	"github.com/baixiaoshengofficial/codebuddy2api/internal/jsonvalue"
 )
 
 func Insufficient(value any) bool {
 	if text, ok := value.(string); ok {
 		var decoded any
-		if json.Unmarshal([]byte(text), &decoded) == nil {
+		if jsonvalue.Unmarshal([]byte(text), &decoded) == nil {
 			value = decoded
 		}
 	}

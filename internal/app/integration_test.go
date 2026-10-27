@@ -418,3 +418,32 @@ func TestLegacyCredentialUsageAndModeCompatibility(t *testing.T) {
 		t.Fatal(current)
 	}
 }
+
+func TestProxyPreservesLargeSchemaNumbersAndUsage(t *testing.T) {
+	a, _ := setup(t, doer(func(r *http.Request) (*http.Response, error) {
+		raw, err := io.ReadAll(r.Body)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !strings.Contains(string(raw), `"enum":[1234567890123456789]`) {
+			t.Error("numeric schema changed", string(raw))
+		}
+		return response(200, answer), nil
+	}))
+	if err := a.Code.Put("a.json", data{"bearer_token": "token", "user_id": "person"}); err != nil {
+		t.Fatal(err)
+	}
+	request := `{"model":"mock","messages":[{"role":"user","content":"hello"}],"tools":[{"type":"function","function":{"name":"lookup","parameters":{"type":"object","properties":{"id":{"type":"integer","enum":[1234567890123456789]}}}}}],"_credential_index":0}`
+	w := call(a, "POST", "/codebuddy/v1/chat/completions", request, true)
+	if w.Code != 200 {
+		t.Fatal(w.Code, w.Body.String())
+	}
+	if got := decode(t, w).Object("usage").Number("total_tokens"); got != 5 {
+		t.Fatal(got)
+	}
+	logs := decode(t, call(a, "GET", "/api/console/requests", "", true))
+	row := data(logs["items"].([]any)[0].(map[string]any))
+	if row.Number("total_tokens") != 5 || row.Number("token_estimated") != 0 {
+		t.Fatal(row)
+	}
+}

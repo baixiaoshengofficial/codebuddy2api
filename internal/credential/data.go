@@ -8,6 +8,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/baixiaoshengofficial/codebuddy2api/internal/jsonvalue"
 )
 
 type Data map[string]any
@@ -31,8 +33,11 @@ func (d Data) Number(key string) int64 {
 	case int64:
 		return v
 	case json.Number:
-		n, _ := v.Int64()
-		return n
+		if n, err := v.Int64(); err == nil {
+			return n
+		}
+		n, _ := v.Float64()
+		return int64(n)
 	case string:
 		n, _ := strconv.ParseInt(v, 10, 64)
 		return n
@@ -48,7 +53,12 @@ func (d Data) Object(key string) Data {
 	}
 	return Data{}
 }
-func Clone(d Data) Data { b, _ := json.Marshal(d); out := Data{}; json.Unmarshal(b, &out); return out }
+func Clone(d Data) Data {
+	b, _ := json.Marshal(d)
+	out := Data{}
+	jsonvalue.Unmarshal(b, &out)
+	return out
+}
 func Claims(token string) Data {
 	parts := strings.Split(token, ".")
 	if len(parts) < 3 {
@@ -59,7 +69,7 @@ func Claims(token string) Data {
 		return Data{}
 	}
 	d := Data{}
-	if json.Unmarshal(b, &d) != nil || d == nil {
+	if jsonvalue.Unmarshal(b, &d) != nil || d == nil {
 		return Data{}
 	}
 	return d

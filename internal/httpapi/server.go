@@ -130,6 +130,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 func decode(w http.ResponseWriter, r *http.Request, target any) error {
 	r.Body = http.MaxBytesReader(w, r.Body, 8<<20)
 	decoder := json.NewDecoder(r.Body)
+	decoder.UseNumber()
 	if err := decoder.Decode(target); err != nil {
 		return fault.New(400, "invalid_json", "Request body must be valid JSON")
 	}

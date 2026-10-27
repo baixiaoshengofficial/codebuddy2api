@@ -251,3 +251,16 @@ func TestSavedLoginIsNotRepolledAfterRoutingSaveFailure(t *testing.T) {
 		t.Fatal("duplicate saved credential")
 	}
 }
+
+func TestNumericAccountUIDDoesNotLosePrecision(t *testing.T) {
+	client := Client{Product: WorkBuddy, Endpoint: func() string { return "https://example.invalid" }, HTTP: doer(func(r *http.Request) (*http.Response, error) {
+		if r.URL.Path == "/v2/plugin/auth/token" {
+			return response(200, `{"code":0,"data":{"accessToken":"token"}}`), nil
+		}
+		return response(200, `{"data":{"uid":1234567890123456789}}`), nil
+	})}
+	token, pending, err := client.Poll(context.Background(), "state")
+	if err != nil || pending || token.Text("account_uid") != "1234567890123456789" {
+		t.Fatal(token, pending, err)
+	}
+}

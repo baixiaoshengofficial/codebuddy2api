@@ -52,8 +52,12 @@ func selector(body credential.Data) (string, *int, error) {
 		}
 	}
 	if v := body["_credential_index"]; v != nil {
-		n, ok := v.(float64)
-		if !ok || n < 0 || n > 1000000 || n != float64(int(n)) {
+		number, ok := v.(json.Number)
+		if !ok {
+			return "", nil, fault.New(422, "invalid_selector", "_credential_index must be an integer")
+		}
+		n, err := number.Int64()
+		if err != nil || n < 0 || n > 1000000 {
 			return "", nil, fault.New(422, "invalid_selector", "_credential_index must be an integer")
 		}
 		i := int(n)
