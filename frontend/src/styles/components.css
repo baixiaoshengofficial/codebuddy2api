@@ -12,7 +12,7 @@
   white-space: nowrap;
 }
 .button:hover:not(:disabled) {
-  background: var(--surface-active);
+  background: var(--surface-hover);
   border-color: var(--border-strong);
 }
 .button.primary {
@@ -22,6 +22,7 @@
 }
 .button.primary:hover:not(:disabled) {
   background: var(--primary-hover);
+  border-color: var(--primary-hover);
 }
 .icon-button {
   display: inline-flex;
@@ -40,17 +41,21 @@
   height: 31px;
 }
 .icon-button:hover:not(:disabled) {
-  background: var(--surface-active);
+  background: var(--surface-hover);
   color: var(--text);
 }
 .icon-button.danger {
-  color: var(--red);
+  color: var(--danger);
+}
+.icon-button.danger:hover:not(:disabled) {
+  background: var(--danger-soft);
+  color: var(--danger);
 }
 .text-button {
   border: 0;
   padding: 4px 0;
   background: transparent;
-  color: var(--green);
+  color: var(--primary);
   font-size: 12px;
 }
 .text-button:hover {
@@ -61,6 +66,7 @@
   background: var(--surface);
   border: 1px solid var(--border);
   border-radius: 10px;
+  box-shadow: var(--card-shadow);
 }
 .data-section > header {
   padding: 20px;
@@ -99,8 +105,8 @@
   overflow-wrap: anywhere;
 }
 .notice.error {
-  background: var(--red-soft);
-  color: var(--red);
+  background: var(--danger-soft);
+  color: var(--danger);
   border-color: transparent;
 }
 .notice .text-button {
@@ -125,23 +131,25 @@
   background: currentColor;
 }
 .status-badge.active,
-.status-badge.success,
-.status-badge.available,
-.status-badge.refreshable {
-  background: var(--green-soft);
-  color: var(--green);
+.status-badge.refreshable,
+.status-badge.pending {
+  background: var(--primary-soft);
+  color: var(--primary);
 }
-.status-badge.cooldown,
-.status-badge.pending,
-.status-badge.cancelled {
-  background: var(--amber-soft);
-  color: var(--amber);
+.status-badge.success,
+.status-badge.available {
+  background: var(--success-soft);
+  color: var(--success);
+}
+.status-badge.cooldown {
+  background: var(--warning-soft);
+  color: var(--warning);
 }
 .status-badge.error,
 .status-badge.expired,
 .status-badge.reauthorize {
-  background: var(--red-soft);
-  color: var(--red);
+  background: var(--danger-soft);
+  color: var(--danger);
 }
 .tabs {
   display: flex;
@@ -159,16 +167,16 @@
   color: var(--muted);
 }
 .tabs > button.active {
-  color: var(--green);
-  border-bottom-color: var(--green);
+  color: var(--primary);
+  border-bottom-color: var(--primary);
   font-weight: 600;
 }
 .tabs span,
 .count {
   padding: 2px 5px;
-  background: var(--green-soft);
+  background: var(--primary-soft);
   border-radius: 4px;
-  color: var(--green);
+  color: var(--primary);
   font-size: 10px;
 }
 .segmented-control {
@@ -188,9 +196,9 @@
   white-space: nowrap;
 }
 .segmented-control > button.active {
-  color: var(--green);
+  color: var(--primary);
   background: var(--surface);
-  box-shadow: 0 1px 4px #243e2d10;
+  box-shadow: var(--shadow-small);
 }
 .table-shell {
   width: 100%;
@@ -219,7 +227,7 @@
   border-bottom: 0;
 }
 .data-table tr.selected {
-  background: var(--green-soft);
+  background: var(--primary-soft);
 }
 .data-table td strong,
 .data-table td small {
@@ -252,8 +260,8 @@
   display: grid;
   place-items: center;
   border-radius: 9px;
-  color: var(--green);
-  background: var(--surface-active);
+  color: var(--primary);
+  background: var(--primary-soft);
   font-size: 11px;
   font-weight: 600;
 }
@@ -279,7 +287,7 @@
   height: 7px;
   border: 2px solid var(--border-strong);
   border-radius: 50%;
-  background: var(--green);
+  background: var(--primary);
 }
 .timeline strong {
   font-size: 12px;
@@ -296,7 +304,7 @@
   z-index: 60;
   display: flex;
   justify-content: flex-end;
-  background: #15251a60;
+  background: var(--overlay);
 }
 .drawer {
   display: flex;
@@ -376,13 +384,13 @@
   overflow-wrap: anywhere;
 }
 .toast-success > svg {
-  color: var(--green);
+  color: var(--success);
 }
 .toast-error > svg {
-  color: var(--red);
+  color: var(--danger);
 }
 .toast-warning > svg {
-  color: var(--amber);
+  color: var(--warning);
 }
 @media (max-width: 560px) {
   .data-section > header {

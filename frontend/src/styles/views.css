@@ -7,8 +7,10 @@
 }
 .routing-summary {
   padding: 23px;
-  background: linear-gradient(115deg, var(--green-soft), var(--surface-subtle));
-  border: 1px solid var(--border-strong);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--primary);
+  box-shadow: var(--card-shadow);
   border-radius: 10px;
 }
 .routing-summary > header {
@@ -18,7 +20,7 @@
   gap: 12px;
 }
 .routing-summary .eyebrow {
-  color: var(--green);
+  color: var(--primary);
   margin: 0;
 }
 .routing-path {
@@ -156,8 +158,8 @@
   align-items: center;
   justify-content: space-between;
   gap: 22px;
-  background: var(--green-soft);
-  border: 1px solid var(--border-strong);
+  background: var(--primary-soft);
+  border: 1px solid var(--primary-border);
   border-radius: 10px;
   padding: 28px;
 }
@@ -167,7 +169,7 @@
   margin-bottom: 14px;
 }
 .endpoint-banner code {
-  color: var(--green);
+  color: var(--primary);
   overflow-wrap: anywhere;
 }
 .usage-list {
@@ -191,17 +193,17 @@
   height: 7px;
   border: 0;
   border-radius: 4px;
-  background: var(--surface-active);
+  background: var(--surface-hover);
 }
 meter::-webkit-meter-bar {
-  background: var(--surface-active);
+  background: var(--surface-hover);
   border: 0;
 }
 meter::-webkit-meter-optimum-value {
-  background: var(--green);
+  background: var(--primary);
 }
 meter::-moz-meter-bar {
-  background: var(--green);
+  background: var(--primary);
 }
 /* Requests */
 .request-filters {
@@ -258,8 +260,8 @@ meter::-moz-meter-bar {
   width: 100%;
 }
 .search-form .search-pending {
-  border-color: var(--green);
-  color: var(--green);
+  border-color: var(--primary);
+  color: var(--primary);
 }
 .request-table {
   min-width: 980px;
@@ -314,8 +316,8 @@ meter::-moz-meter-bar {
   white-space: nowrap;
 }
 .attempt-count.multiple {
-  color: var(--amber);
-  background: var(--amber-soft);
+  color: var(--warning);
+  background: var(--warning-soft);
   border-color: transparent;
 }
 .pagination {
@@ -350,7 +352,7 @@ meter::-moz-meter-bar {
   margin-top: 20px;
 }
 .attempt-timeline p.error-text {
-  color: var(--red);
+  color: var(--danger);
 }
 /* API playground */
 .api-test-grid {
@@ -737,7 +739,7 @@ meter::-moz-meter-bar {
 }
 .quota-details summary {
   cursor: pointer;
-  color: var(--green);
+  color: var(--primary);
 }
 .quota-details dl {
   display: grid;
