@@ -37,6 +37,7 @@ cd frontend && npm test && npm run build
 | `internal/credential` | 账号身份、JSON 存储、凭证选择和续期 |
 | `internal/oauth` | 两类产品的设备授权协议和授权会话 |
 | `internal/checkin` | WorkBuddy 奖励领取、定时执行和通知 |
+| `internal/quota` | 账号额度查询、积分包汇总和缓存 |
 | `internal/ledger` | SQLite 请求明细、尝试记录、筛选与导出 |
 | `internal/config` | 环境变量、配置文件和热更新 |
 | `internal/modelcatalog` | 模型发现与缓存 |
@@ -99,3 +100,11 @@ make image-release
 ```
 
 只验证、不发布时执行 `make image-test`。需要支持多平台的 Docker Buildx。测试阶段在目标架构的 Debian 环境执行现有 Go 测试，并启动实际服务检查 `/health`；ARM64 可使用 BuildKit 的 QEMU 执行。测试二进制和临时数据不会进入发布镜像。
+
+## 账号额度
+
+`internal/quota` 独立处理只读额度查询、分页校验、积分汇总及缓存，不参与聊天路由和签到领取。两类凭证沿用各自的存储与续期服务，向当前站点的 `/v2/billing/meter/get-user-resource` 查询；请求使用 `X-Product: SaaS` 和官方客户端请求头。
+
+凭证列表展示当前可用积分、更新时间及额度明细。金额按上游 `Precise` 字段进行十进制计算，接口用字符串传递。只计算当前有效期和周期内的积分包；分片资源再受当前分片额度约束。到期提示包含到期或重置时间。两种产品下同一账号可能共享积分，界面不汇总跨产品余额。
+
+`GET /api/console/quotas/{product}` 返回各凭证额度；`POST /api/console/quotas/{product}/{filename}` 刷新指定账号，均需管理密码。成功缓存五分钟，失败缓存一分钟，手动刷新最短间隔十秒，并发查询合并，每类最多四个在途查询。缓存随凭证或站点变化失效，到期/重置后重新查询。查询失败保留上次成功结果并标记过时，没有历史结果显示未知；上游响应和令牌不会返回浏览器。缓存仅在内存中，重启后重新获取，不修改原有文件或数据库格式。

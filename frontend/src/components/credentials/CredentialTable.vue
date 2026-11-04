@@ -1,6 +1,7 @@
 <script setup>
 import { onBeforeUnmount, onMounted, ref } from "vue";
 import { KeyRound, LockKeyhole, Trash2, ShieldCheck } from "@lucide/vue";
+import QuotaCell from "./QuotaCell.vue";
 import StatusBadge from "../StatusBadge.vue";
 import AuthorizationPanel from "./AuthorizationPanel.vue";
 import { credentialLabel, dateTime } from "../../lib/format";
@@ -9,8 +10,12 @@ const props = defineProps({
   busy: Boolean,
   serverTime: Number,
   filtered: Boolean,
+  quotas: Array,
+  quotaLoading: Boolean,
+  quotaError: String,
+  quotaRefreshing: Set,
 });
-defineEmits(["lock", "delete", "test", "saved", "reset"]);
+defineEmits(["lock", "delete", "test", "saved", "reset", "refresh-quota"]);
 const now = ref(Date.now());
 let timer,
   offset = 0;
@@ -38,13 +43,14 @@ function cooldown(row) {
         <tr>
           <th>账号</th>
           <th>状态</th>
+          <th>剩余额度</th>
           <th>有效期</th>
           <th>操作</th>
         </tr>
       </thead>
       <tbody>
         <tr v-if="!rows.length">
-          <td colspan="4">
+          <td colspan="5">
             <div class="empty-state">
               <KeyRound :size="24" /><strong>{{
                 filtered
@@ -86,6 +92,16 @@ function cooldown(row) {
               state="refreshable"
             /><small v-if="row.state === 'cooldown'">{{ cooldown(row) }}</small>
           </td>
+          <td data-label="剩余额度">
+            <QuotaCell
+              :result="quotas?.find((item) => item.filename === row.filename)"
+              :loading="quotaLoading"
+              :error="quotaError"
+              :busy="quotaRefreshing?.has(row.filename)"
+              :label="credentialLabel(row)"
+              @refresh="$emit('refresh-quota', row.filename)"
+            />
+          </td>
           <td data-label="有效期">
             <strong>{{
               row.expires_at
@@ -105,7 +121,9 @@ function cooldown(row) {
               <AuthorizationPanel
                 v-if="
                   row.is_expired ||
-                  ['expired', 'reauthorize'].includes(row.state)
+                  ['expired', 'reauthorize'].includes(row.state) ||
+                  quotas?.find((item) => item.filename === row.filename)
+                    ?.status === 'unauthorized'
                 "
                 product="codebuddy"
                 :credential="row"

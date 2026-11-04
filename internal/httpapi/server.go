@@ -30,6 +30,7 @@ type Dependencies struct {
 	CodeAuth, WorkAuth          *oauth.Service
 	Logs                        *ledger.Store
 	Checkin                     *checkin.Service
+	Quotas                      map[string]Quotas
 	Models                      Models
 	Frontend, Version, Revision string
 }
@@ -78,6 +79,8 @@ func (s *Server) routes() {
 		}
 		writeJSON(w, 200, map[string]any{"status": "healthy", "version": s.d.Version, "revision": revision})
 	})
+	s.protected("GET /api/console/quotas/{product}", s.quotas)
+	s.protected("POST /api/console/quotas/{product}/{filename}", s.quotas)
 	s.protected("GET /api/console/credentials", s.routing)
 	s.protected("POST /api/console/credentials/mode", s.mode)
 	s.protected("DELETE /api/console/credentials/{filename}", s.deleteCredential)

@@ -102,7 +102,7 @@
 .workbuddy-row {
   display: grid;
   grid-template-columns:
-    33px minmax(0, 1.3fr) minmax(0, 1fr) minmax(0, 0.8fr)
+    33px minmax(0, 1.2fr) minmax(0, 1fr) minmax(0, 1fr) minmax(0, 0.8fr)
     auto;
   align-items: center;
   gap: 15px;
@@ -510,7 +510,7 @@ meter::-moz-meter-bar {
 .login-button {
   margin-top: 14px;
 }
-@media (max-width: 1250px) {
+@media (max-width: 1450px) {
   .credential-layout {
     grid-template-columns: minmax(0, 1fr);
   }
@@ -538,14 +538,26 @@ meter::-moz-meter-bar {
 @media (max-width: 1100px) {
   .workbuddy-row {
     grid-template-columns: 33px repeat(2, minmax(0, 1fr));
+    grid-template-areas: "avatar account account" ". auth quota" ". checkin quota" ". actions actions";
     align-items: start;
   }
-  .workbuddy-account,
-  .workbuddy-actions {
-    grid-column: 2 / -1;
+  .workbuddy-row > .avatar {
+    grid-area: avatar;
+  }
+  .workbuddy-account {
+    grid-area: account;
   }
   .workbuddy-auth-state {
-    grid-column: 2;
+    grid-area: auth;
+  }
+  .workbuddy-quota {
+    grid-area: quota;
+  }
+  .workbuddy-checkin-state {
+    grid-area: checkin;
+  }
+  .workbuddy-actions {
+    grid-area: actions;
   }
 }
 @media (max-width: 600px) {
@@ -687,5 +699,72 @@ meter::-moz-meter-bar {
     padding: 14px;
     gap: 12px;
     flex-wrap: wrap;
+  }
+}
+
+/* Account balances share one presentation across both products. */
+.quota-cell {
+  min-width: 140px;
+  max-width: 260px;
+}
+.quota-value {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+.quota-value strong {
+  font-variant-numeric: tabular-nums;
+}
+.quota-value strong > span {
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 400;
+}
+.quota-cell > small {
+  display: block;
+  font-size: 10px;
+  line-height: 1.6;
+  margin-top: 4px;
+  overflow-wrap: anywhere;
+}
+.quota-message,
+.quota-stale {
+  color: var(--muted);
+}
+.quota-details {
+  font-size: 11px;
+  margin-top: 6px;
+}
+.quota-details summary {
+  cursor: pointer;
+  color: var(--green);
+}
+.quota-details dl {
+  display: grid;
+  gap: 6px;
+  margin: 8px 0 0;
+}
+.quota-details dl > div {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+}
+.quota-details dt {
+  color: var(--muted);
+}
+.quota-details dd {
+  text-align: right;
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+@media (max-width: 600px) {
+  .quota-cell {
+    max-width: 100%;
+  }
+  .credential-table .quota-value {
+    justify-content: flex-end;
+  }
+  .workbuddy-quota .quota-cell {
+    min-width: 0;
   }
 }

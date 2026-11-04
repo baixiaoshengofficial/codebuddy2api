@@ -10,11 +10,16 @@ import CredentialTable from "../components/credentials/CredentialTable.vue";
 import RequestDetails from "../components/requests/RequestDetails.vue";
 import CredentialTest from "../components/credentials/CredentialTest.vue";
 import WorkbuddyPanel from "../components/credentials/WorkbuddyPanel.vue";
+import { useQuotas } from "../composables/useQuotas";
 import { useResource } from "../composables/useResource";
 import { useAction } from "../composables/useAction";
 import { consoleApi } from "../services/console";
 import { credentialLabel } from "../lib/format";
 const tab = ref("codebuddy");
+const quotas = useQuotas("codebuddy");
+async function refreshAccounts() {
+  await Promise.all([refresh(), quotas.refresh()]);
+}
 const testing = ref(null);
 const selectedRequest = ref(null);
 const { data, loading, error, refresh } = useResource(
@@ -49,7 +54,7 @@ function mode(value, filename) {
   run(
     async () => {
       await consoleApi.setMode(value, filename);
-      await refresh();
+      await refreshAccounts();
     },
     value === "auto" ? "已恢复自动切换" : "已锁定凭证",
   );
@@ -63,7 +68,7 @@ function remove(row) {
     return;
   run(async () => {
     await consoleApi.deleteCredential(row.filename);
-    await refresh();
+    await refreshAccounts();
   }, "凭证已删除");
 }
 </script>
@@ -74,9 +79,15 @@ function remove(row) {
       eyebrow="CREDENTIALS"
       description="管理账号授权，让每一次请求都有清晰的去向。"
       ><template v-if="tab === 'codebuddy'"
-        ><button class="button secondary" :disabled="loading" @click="refresh">
+        ><button
+          class="button secondary"
+          :disabled="loading"
+          @click="refreshAccounts"
+        >
           <RefreshCw :size="16" :class="{ spin: loading }" />刷新</button
-        ><AuthorizationPanel product="codebuddy" @saved="refresh" /></template
+        ><AuthorizationPanel
+          product="codebuddy"
+          @saved="refreshAccounts" /></template
     ></PageHeader>
     <div class="tabs" role="tablist" aria-label="凭证产品">
       <button
@@ -107,7 +118,10 @@ function remove(row) {
               <h3>
                 凭证池 <span class="count">{{ data.credentials.length }}</span>
               </h3>
-              <small>{{ data.available }} 个可用 · 每 5 秒自动更新</small>
+              <small
+                >{{ data.available }} 个可用 · 状态每 5 秒更新，额度缓存 5
+                分钟</small
+              >
             </div>
           </header>
           <div class="table-toolbar credential-filters">
@@ -138,13 +152,18 @@ function remove(row) {
           <CredentialTable
             v-else
             :rows="rows"
+            :quotas="quotas.data.value.accounts"
+            :quota-loading="quotas.loading.value"
+            :quota-error="quotas.error.value"
+            :quota-refreshing="quotas.refreshing.value"
+            @refresh-quota="quotas.refreshOne"
             :busy="busy"
             :server-time="data.server_time"
             :filtered="filtered"
             @lock="mode('manual', $event.filename)"
             @delete="remove"
             @test="testing = $event"
-            @saved="refresh"
+            @saved="refreshAccounts"
             @reset="resetFilters"
           />
         </section>

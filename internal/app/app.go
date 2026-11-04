@@ -18,6 +18,7 @@ import (
 	"github.com/baixiaoshengofficial/codebuddy2api/internal/ledger"
 	"github.com/baixiaoshengofficial/codebuddy2api/internal/modelcatalog"
 	"github.com/baixiaoshengofficial/codebuddy2api/internal/oauth"
+	"github.com/baixiaoshengofficial/codebuddy2api/internal/quota"
 	"github.com/baixiaoshengofficial/codebuddy2api/internal/upstream"
 )
 
@@ -101,7 +102,11 @@ func New(parent context.Context, options Options) (*App, error) {
 	if version == "" {
 		version = "1.0.0"
 	}
-	handler := httpapi.New(httpapi.Dependencies{Config: settings, Code: code, Work: work, Router: router, Ready: ready, Chat: chatService, CodeAuth: codeAuth, WorkAuth: workAuth, Logs: logs, Checkin: checkins, Models: &modelcatalog.Catalog{Context: ctx, Client: controlClient}, Frontend: filepath.Join(root, "frontend/dist"), Version: version, Revision: options.Revision})
+	quotas := map[string]httpapi.Quotas{
+		"codebuddy": quota.New(code, refresh, &quota.Provider{Client: controlClient, Endpoint: endpoint, Agent: "CLI/1.0.8 CodeBuddy/1.0.8"}, endpoint),
+		"workbuddy": quota.New(work, workRefresh, &quota.Provider{Client: controlClient, Endpoint: endpoint, Agent: "WorkBuddy/5.2.5"}, endpoint),
+	}
+	handler := httpapi.New(httpapi.Dependencies{Quotas: quotas, Config: settings, Code: code, Work: work, Router: router, Ready: ready, Chat: chatService, CodeAuth: codeAuth, WorkAuth: workAuth, Logs: logs, Checkin: checkins, Models: &modelcatalog.Catalog{Context: ctx, Client: controlClient}, Frontend: filepath.Join(root, "frontend/dist"), Version: version, Revision: options.Revision})
 	return &App{Handler: handler, Config: settings, Logs: logs, Checkin: checkins, Code: code, Router: router, Refresh: refresh, cancel: cancel, client: client, context: ctx, control: controlClient}, nil
 }
 func (a *App) Background() {

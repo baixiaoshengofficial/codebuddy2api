@@ -5,6 +5,7 @@ import "net/http"
 var documentedPaths = map[string][]string{
 	"/health": {"get"}, "/codebuddy/v1/models": {"get"}, "/codebuddy/v1/chat/completions": {"post"}, "/codebuddy/v1/responses": {"post"},
 	"/api/settings": {"get", "post"}, "/api/checkin": {"get"}, "/api/checkin/run": {"post"}, "/api/stats": {"get"},
+	"/api/console/quotas/{product}": {"get"}, "/api/console/quotas/{product}/{filename}": {"post"},
 	"/api/console/status": {"get"}, "/api/console/credentials": {"get"}, "/api/console/credentials/mode": {"post"}, "/api/console/credentials/{filename}": {"delete"},
 	"/api/console/requests": {"get"}, "/api/console/requests/export": {"get"}, "/api/console/requests/{id}": {"get"}, "/api/console/overview": {"get"},
 	"/workbuddy/credentials": {"get"}, "/workbuddy/credentials/{filename}": {"delete"},

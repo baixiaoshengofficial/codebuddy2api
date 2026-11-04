@@ -2,6 +2,11 @@ import { apiFetch, authHeaders } from "../lib/api";
 
 const json = (method, body) => ({ method, body: JSON.stringify(body) });
 export const consoleApi = {
+  quotas: (product) => apiFetch(`/api/console/quotas/${product}`),
+  refreshQuota: (product, filename) =>
+    apiFetch(`/api/console/quotas/${product}/${encodeURIComponent(filename)}`, {
+      method: "POST",
+    }),
   status: () => apiFetch("/api/console/status"),
   credentials: () => apiFetch("/api/console/credentials"),
   setMode: (mode, filename) =>

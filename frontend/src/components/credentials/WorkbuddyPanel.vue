@@ -1,6 +1,8 @@
 <script setup>
 import { computed } from "vue";
 import { Gift, RefreshCw, Trash2 } from "@lucide/vue";
+import QuotaCell from "./QuotaCell.vue";
+import { useQuotas } from "../../composables/useQuotas";
 import AuthorizationPanel from "./AuthorizationPanel.vue";
 import ResourceNotice from "../ResourceNotice.vue";
 import StatusBadge from "../StatusBadge.vue";
@@ -9,6 +11,10 @@ import { useResource } from "../../composables/useResource";
 import { useAction } from "../../composables/useAction";
 import { dateTime } from "../../lib/format";
 import { workbuddyAuthorization } from "../../lib/credentialState";
+const quotas = useQuotas("workbuddy");
+async function refreshAccounts() {
+  await Promise.all([refresh(), quotas.refresh()]);
+}
 const { data, loading, error, refresh } = useResource(
   async () => {
     const [credentials, checkin] = await Promise.all([
@@ -51,7 +57,7 @@ async function remove(row) {
     return;
   await run(async () => {
     await consoleApi.deleteWorkbuddy(row.filename);
-    await refresh();
+    await refreshAccounts();
   }, "已删除 WorkBuddy 凭证");
 }
 </script>
@@ -74,7 +80,7 @@ async function remove(row) {
           @click="
             run(async () => {
               await consoleApi.runCheckin();
-              await refresh();
+              await refreshAccounts();
             }, '签到检查完成')
           "
         >
@@ -82,15 +88,16 @@ async function remove(row) {
         ><button
           class="icon-button"
           :disabled="loading"
-          title="刷新签到状态"
-          @click="refresh"
+          title="刷新账号、签到状态与额度"
+          @click="refreshAccounts"
         >
           <RefreshCw :size="17" :class="{ spin: loading }" /></button
-        ><AuthorizationPanel product="workbuddy" @saved="refresh" />
+        ><AuthorizationPanel product="workbuddy" @saved="refreshAccounts" />
       </div>
     </header>
     <p class="section-description">
-      这些账号用于签到，不参与 CodeBuddy 模型请求的凭证切换。
+      这些账号用于签到，不参与 CodeBuddy 模型请求的凭证切换。额度缓存 5
+      分钟；同一账号在两种产品下的额度可能共享。
     </p>
     <div v-if="!rows.length" class="empty-state">
       {{
@@ -121,6 +128,21 @@ async function remove(row) {
             : "未提供到期时间"
         }}</small>
       </div>
+      <div class="workbuddy-quota">
+        <small class="field-caption">剩余额度</small>
+        <QuotaCell
+          :result="
+            quotas.data.value.accounts.find(
+              (item) => item.filename === row.filename,
+            )
+          "
+          :loading="quotas.loading.value"
+          :error="quotas.error.value"
+          :busy="quotas.refreshing.value.has(row.filename)"
+          :label="row.phone || row.email || row.filename"
+          @refresh="quotas.refreshOne(row.filename)"
+        />
+      </div>
       <div class="workbuddy-checkin-state">
         <small class="field-caption">签到结果</small>
         <StatusBadge
@@ -139,11 +161,17 @@ async function remove(row) {
       </div>
       <div class="row-actions workbuddy-actions">
         <AuthorizationPanel
-          v-if="row.is_expired || row.checkin.status === 'expired'"
+          v-if="
+            row.is_expired ||
+            row.checkin.status === 'expired' ||
+            quotas.data.value.accounts.find(
+              (item) => item.filename === row.filename,
+            )?.status === 'unauthorized'
+          "
           product="workbuddy"
           :credential="row"
           :disabled="busy"
-          @saved="refresh"
+          @saved="refreshAccounts"
         />
         <button
           class="icon-button danger"
