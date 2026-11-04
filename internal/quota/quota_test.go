@@ -386,3 +386,15 @@ func TestEmptyBalanceExpiresAtResetAndSiteChangesInvalidateCache(t *testing.T) {
 		t.Fatal("balance survived site change")
 	}
 }
+
+func TestServiceRejectsSiteChangeDuringQuery(t *testing.T) {
+	site := "first-site"
+	s, _, _ := service(t, queryFunc(func(context.Context, credential.Data) (Balance, error) {
+		site = "second-site"
+		return Balance{Remaining: "100"}, nil
+	}))
+	s.scope = func() string { return site }
+	if _, err := s.Refresh(context.Background(), "a.json"); !errors.Is(err, credential.ErrConflict) {
+		t.Fatal("cached a response from the previous site", err)
+	}
+}

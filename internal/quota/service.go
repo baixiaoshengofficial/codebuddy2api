@@ -121,6 +121,7 @@ func (s *Service) query(ctx context.Context, name string, force bool) (Result, e
 	if err != nil {
 		return Result{}, err
 	}
+	queryScope := s.scope()
 	key := s.fingerprint(d)
 	now := s.now()
 	ttl := 5 * time.Minute
@@ -173,7 +174,7 @@ func (s *Service) query(ctx context.Context, name string, force bool) (Result, e
 	if used == nil {
 		used = d
 	}
-	if s.fingerprint(current) != s.fingerprint(used) {
+	if s.scope() != queryScope || s.fingerprint(current) != s.fingerprint(used) {
 		return Result{}, credential.ErrConflict
 	}
 	result := Result{Filename: name, Status: "ok", CheckedAt: s.now().Unix()}
