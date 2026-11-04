@@ -79,6 +79,12 @@
 .credential-table td {
   padding-inline: 18px;
 }
+.credential-status {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+}
 .credential-table .row-actions {
   justify-content: flex-end;
 }
@@ -710,11 +716,14 @@ meter::-moz-meter-bar {
   max-width: 260px;
 }
 .quota-value {
+  min-width: 0;
   display: flex;
   align-items: center;
   gap: 7px;
 }
 .quota-value strong {
+  min-width: 0;
+  overflow-wrap: anywhere;
   font-variant-numeric: tabular-nums;
 }
 .quota-value strong > span {
@@ -729,7 +738,9 @@ meter::-moz-meter-bar {
   margin-top: 4px;
   overflow-wrap: anywhere;
 }
-.quota-message,
+.quota-message {
+  color: var(--warning);
+}
 .quota-stale {
   color: var(--muted);
 }
@@ -738,13 +749,36 @@ meter::-moz-meter-bar {
   margin-top: 6px;
 }
 .quota-details summary {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  min-height: 28px;
+  padding: 3px 0;
+  border-radius: 4px;
   cursor: pointer;
-  color: var(--primary);
+  color: var(--muted);
+  font-weight: 500;
+  list-style: none;
+}
+.quota-details summary::-webkit-details-marker {
+  display: none;
+}
+.quota-details summary:hover {
+  color: var(--text);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+.quota-details[open] .quota-chevron {
+  transform: rotate(180deg);
 }
 .quota-details dl {
   display: grid;
-  gap: 6px;
-  margin: 8px 0 0;
+  gap: 8px;
+  margin: 5px 0 0;
+  padding: 10px;
+  background: var(--surface-subtle);
+  border: 1px solid var(--border);
+  border-radius: 6px;
 }
 .quota-details dl > div {
   display: flex;
@@ -752,14 +786,34 @@ meter::-moz-meter-bar {
   gap: 12px;
 }
 .quota-details dt {
+  text-align: left;
   color: var(--muted);
 }
 .quota-details dd {
   text-align: right;
   margin: 0;
   overflow-wrap: anywhere;
+  font-variant-numeric: tabular-nums;
+}
+.quota-details dl > .quota-expiry {
+  display: block;
+}
+.quota-expiry dt {
+  margin-bottom: 4px;
+}
+.quota-expiry dd {
+  text-align: left;
 }
 @media (max-width: 600px) {
+  .credential-table tr.selected {
+    border-left: 3px solid var(--primary);
+  }
+  .credential-table tr.selected > td:first-child {
+    box-shadow: none;
+  }
+  .quota-details summary {
+    min-height: 36px;
+  }
   .quota-cell {
     max-width: 100%;
   }

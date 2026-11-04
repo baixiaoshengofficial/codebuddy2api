@@ -5,6 +5,8 @@
   color: var(--primary);
 }
 .app-shell {
+  min-height: 100vh;
+  min-height: 100dvh;
   --sidebar-width: 220px;
   padding-left: var(--sidebar-width);
 }

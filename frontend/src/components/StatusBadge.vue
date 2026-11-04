@@ -4,6 +4,6 @@ defineProps({ state: String, label: String });
 </script>
 <template>
   <span class="status-badge" :class="state"
-    ><i />{{ label || stateLabels[state] || state }}</span
+    ><i aria-hidden="true" />{{ label || stateLabels[state] || state }}</span
   >
 </template>

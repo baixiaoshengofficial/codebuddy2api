@@ -116,13 +116,15 @@
   display: inline-flex;
   gap: 5px;
   align-items: center;
-  border-radius: 4px;
-  padding: 4px 7px;
-  background: var(--surface-subtle);
-  color: var(--muted);
-  font-size: 10px;
+  border-radius: 5px;
+  padding: 4px 8px;
+  background: var(--badge-bg, var(--surface-subtle));
+  color: var(--badge-color, var(--muted));
+  font-size: 11px;
+  font-weight: 500;
   line-height: 1.5;
   white-space: nowrap;
+  vertical-align: middle;
 }
 .status-badge i {
   width: 5px;
@@ -133,23 +135,23 @@
 .status-badge.active,
 .status-badge.refreshable,
 .status-badge.pending {
-  background: var(--primary-soft);
-  color: var(--primary);
+  --badge-bg: var(--primary-soft);
+  --badge-color: var(--primary);
 }
 .status-badge.success,
 .status-badge.available {
-  background: var(--success-soft);
-  color: var(--success);
+  --badge-bg: var(--success-soft);
+  --badge-color: var(--success);
 }
 .status-badge.cooldown {
-  background: var(--warning-soft);
-  color: var(--warning);
+  --badge-bg: var(--warning-soft);
+  --badge-color: var(--warning);
 }
 .status-badge.error,
 .status-badge.expired,
 .status-badge.reauthorize {
-  background: var(--danger-soft);
-  color: var(--danger);
+  --badge-bg: var(--danger-soft);
+  --badge-color: var(--danger);
 }
 .tabs {
   display: flex;
@@ -226,8 +228,8 @@
 .data-table tbody tr:last-child td {
   border-bottom: 0;
 }
-.data-table tr.selected {
-  background: var(--primary-soft);
+.data-table tr.selected > td:first-child {
+  box-shadow: inset 3px 0 var(--primary);
 }
 .data-table td strong,
 .data-table td small {

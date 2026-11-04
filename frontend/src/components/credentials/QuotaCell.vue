@@ -1,5 +1,5 @@
 <script setup>
-import { RefreshCw } from "@lucide/vue";
+import { ChevronDown, RefreshCw } from "@lucide/vue";
 import { dateTime } from "../../lib/format";
 import { creditAmount, quotaLabel } from "../../lib/quota";
 defineProps({
@@ -45,7 +45,10 @@ defineEmits(["refresh"]);
       >更新于 {{ dateTime(result.updated_at * 1000) }}</small
     >
     <details v-if="result?.balance" class="quota-details">
-      <summary>额度明细</summary>
+      <summary title="查看额度组成与到期时间">
+        <span>额度明细</span>
+        <ChevronDown :size="14" class="quota-chevron" aria-hidden="true" />
+      </summary>
       <dl>
         <div>
           <dt>当前额度</dt>
@@ -59,7 +62,7 @@ defineEmits(["refresh"]);
             {{ creditAmount(result.balance.used) }}
           </dd>
         </div>
-        <div v-if="result.balance.next_expiry_at">
+        <div v-if="result.balance.next_expiry_at" class="quota-expiry">
           <dt>最近到期 / 重置</dt>
           <dd>
             {{ dateTime(result.balance.next_expiry_at * 1000) }}<br />{{

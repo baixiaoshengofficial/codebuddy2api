@@ -84,13 +84,16 @@ function cooldown(row) {
             </div>
           </td>
           <td data-label="状态">
-            <StatusBadge
-              :state="row.is_current ? 'active' : row.state"
-              :label="row.is_current ? '当前使用' : undefined"
-            /><StatusBadge
-              v-if="row.is_current && row.state === 'refreshable'"
-              state="refreshable"
-            /><small v-if="row.state === 'cooldown'">{{ cooldown(row) }}</small>
+            <div class="credential-status">
+              <StatusBadge
+                :state="row.is_current ? 'active' : row.state"
+                :label="row.is_current ? '当前使用' : undefined"
+              /><StatusBadge
+                v-if="row.is_current && row.state === 'refreshable'"
+                state="refreshable"
+              />
+            </div>
+            <small v-if="row.state === 'cooldown'">{{ cooldown(row) }}</small>
           </td>
           <td data-label="剩余额度">
             <QuotaCell
