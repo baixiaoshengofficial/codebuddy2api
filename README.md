@@ -59,3 +59,7 @@ docker compose up -d --wait
 截图：[请求明细](docs/screenshots/requests-filters-desktop.png) · [手机](docs/screenshots/requests-filters-mobile.png) · [WorkBuddy](docs/screenshots/workbuddy-states-desktop.png)
 
 其他说明：[配置示例](.env.example) · [开发与测试](docs/architecture.md)
+
+## Sponsors
+
+[ForZTN](https://sponsorship.forztn.com/github.com/*)赞助。
