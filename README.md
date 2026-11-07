@@ -62,4 +62,4 @@ docker compose up -d --wait
 
 ## Sponsors
 
-[ForZTN](https://sponsorship.forztn.com/github.com/*)赞助。
+[ForZTN](https://sponsorship.forztn.com/github.com/ProxyCli)赞助。
