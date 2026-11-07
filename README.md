@@ -62,4 +62,4 @@ docker compose up -d --wait
 
 ## Sponsors
 
-[ForZTN](https://sponsorship.forztn.com/github.com/codebuddy2api)赞助。
+[ForZTN](https://sponsorship.forztn.com/github.com/baixiaoshengofficial/codebuddy2api)赞助。
