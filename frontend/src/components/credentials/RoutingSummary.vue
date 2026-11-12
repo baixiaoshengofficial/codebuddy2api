@@ -19,9 +19,11 @@ const next = computed(() =>
   <section class="routing-summary">
     <header>
       <span class="eyebrow"><Route :size="15" />凭证路由</span
-      ><span class="status-badge available">{{
-        routing.mode === "manual" ? "手动锁定" : "自动切换已开启"
-      }}</span>
+      ><span
+        class="status-badge"
+        :class="routing.mode === 'manual' ? 'active' : 'available'"
+        >{{ routing.mode === "manual" ? "手动锁定" : "自动切换已开启" }}</span
+      >
     </header>
     <div class="routing-path">
       <div>

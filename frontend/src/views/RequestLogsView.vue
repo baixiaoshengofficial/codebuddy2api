@@ -1,6 +1,7 @@
 <script setup>
 import { ref } from "vue";
 import { ChevronLeft, ChevronRight, Download, RefreshCw } from "@lucide/vue";
+import EmptyState from "../components/EmptyState.vue";
 import PageHeader from "../components/PageHeader.vue";
 import ResourceNotice from "../components/ResourceNotice.vue";
 import StatusBadge from "../components/StatusBadge.vue";
@@ -70,27 +71,31 @@ const selected = ref(null);
               <th>上游尝试</th>
               <th>Tokens / 耗时</th>
               <th>本轮输入</th>
-              <th></th>
+              <th><span class="sr-only">操作</span></th>
             </tr>
           </thead>
           <tbody>
             <tr v-if="!data.items.length">
               <td colspan="7">
-                <div class="empty-state">
-                  <strong>{{
+                <EmptyState
+                  :loading="loading"
+                  :title="
                     loading
-                      ? "正在加载…"
+                      ? '正在加载请求…'
                       : error
-                        ? "请求记录加载失败"
+                        ? '请求记录加载失败'
                         : activeCount
-                          ? "没有符合筛选条件的请求"
-                          : "今天还没有请求"
-                  }}</strong>
-                  <small v-if="!loading && !error">{{
-                    activeCount
-                      ? "可以调整条件或重置筛选后再查看。"
-                      : "可切换到近 24 小时或近 7 天查看历史记录。"
-                  }}</small>
+                          ? '没有符合筛选条件的请求'
+                          : '今天还没有请求'
+                  "
+                  :description="
+                    !loading && !error
+                      ? activeCount
+                        ? '可以调整条件或重置筛选后再查看。'
+                        : '可切换到近 24 小时或近 7 天查看历史记录。'
+                      : undefined
+                  "
+                >
                   <button
                     v-if="!loading && error"
                     class="button secondary"
@@ -105,7 +110,7 @@ const selected = ref(null);
                   >
                     重置筛选
                   </button>
-                </div>
+                </EmptyState>
               </td>
             </tr>
             <tr v-for="item in data.items" :key="item.id">

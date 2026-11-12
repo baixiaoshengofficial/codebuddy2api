@@ -2,12 +2,12 @@
 defineProps({ title: String, description: String, eyebrow: String });
 </script>
 <template>
-  <div class="view-toolbar">
+  <header class="view-toolbar">
     <div>
       <p v-if="eyebrow" class="eyebrow">{{ eyebrow }}</p>
-      <h2>{{ title }}</h2>
+      <h1 tabindex="-1">{{ title }}</h1>
       <p v-if="description" class="page-description">{{ description }}</p>
     </div>
-    <div class="toolbar-actions"><slot /></div>
-  </div>
+    <div v-if="$slots.default" class="toolbar-actions"><slot /></div>
+  </header>
 </template>

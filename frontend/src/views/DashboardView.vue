@@ -1,6 +1,16 @@
 <script setup>
 import { computed, ref, watch } from "vue";
-import { ArrowUpRight, Copy, RefreshCw } from "@lucide/vue";
+import {
+  Activity,
+  CheckCircle2,
+  Clock3,
+  KeyRound,
+  Copy,
+  RefreshCw,
+} from "@lucide/vue";
+import MetricCard from "../components/MetricCard.vue";
+import ResourceMeta from "../components/ResourceMeta.vue";
+import EmptyState from "../components/EmptyState.vue";
 import PageHeader from "../components/PageHeader.vue";
 import ResourceNotice from "../components/ResourceNotice.vue";
 import { useResource } from "../composables/useResource";
@@ -9,7 +19,7 @@ import { copyText } from "../lib/api";
 import { notify } from "../lib/notify";
 import { latency } from "../lib/format";
 const period = ref("today");
-const { data, loading, error, refresh } = useResource(
+const { data, loading, error, updatedAt, refresh } = useResource(
   async () => {
     const [summary, routing] = await Promise.all([
       consoleApi.overview(
@@ -49,6 +59,7 @@ const metrics = computed(() => [
 ]);
 const entries = (object) =>
   Object.entries(object || {}).sort((a, b) => b[1] - a[1]);
+const metricIcons = [Activity, CheckCircle2, Clock3, KeyRound];
 const endpoint = `${window.location.origin}/codebuddy/v1`;
 async function copy() {
   try {
@@ -64,7 +75,7 @@ async function copy() {
     <PageHeader
       title="运行概览"
       eyebrow="OVERVIEW"
-      description="了解服务的请求表现与凭证可用情况。"
+      description="查看请求表现、调用来源与凭证可用情况。"
       ><select v-model="period" aria-label="概览时间范围">
         <option value="today">今天（北京时间）</option>
         <option value="24h">近 24 小时</option>
@@ -74,20 +85,19 @@ async function copy() {
       </button></PageHeader
     ><ResourceNotice :error="error" @retry="refresh" />
     <div class="metric-grid">
-      <article
-        v-for="[title, value, subtitle] in metrics"
+      <MetricCard
+        v-for="([title, value, subtitle], index) in metrics"
         :key="title"
-        class="metric-card"
-      >
-        <span>{{ title }}<ArrowUpRight :size="17" /></span
-        ><strong>{{ value }}</strong
-        ><small>{{ subtitle }}</small>
-      </article>
+        :label="title"
+        :value="value"
+        :hint="subtitle"
+        :icon="metricIcons[index]"
+      />
     </div>
     <section class="endpoint-banner">
       <div>
         <p class="eyebrow">OPENAI COMPATIBLE</p>
-        <h3>一个端点，连接你的工作流。</h3>
+        <h3>API 接入地址</h3>
         <code>{{ endpoint }}</code>
       </div>
       <button class="button secondary" @click="copy">
@@ -113,9 +123,11 @@ async function copy() {
                 : "近 7 天"
           }}</small>
         </header>
-        <div v-if="!entries(source).length" class="empty-state">
-          当前范围暂无请求
-        </div>
+        <EmptyState
+          v-if="!entries(source).length"
+          title="当前范围暂无请求"
+          description="调整时间范围后，可查看模型与调用来源分布。"
+        />
         <div v-else class="usage-list">
           <div v-for="[name, count] in entries(source)" :key="name">
             <div>
@@ -131,7 +143,12 @@ async function copy() {
         </div>
       </section>
     </div>
-    <p class="muted">
+    <ResourceMeta
+      :updated-at="updatedAt"
+      :loading="loading"
+      label="每 15 秒更新 · 统计来自保留的请求记录"
+    />
+    <p class="muted dashboard-note">
       统计基于保留的请求日志；Tokens
       中的估算值和上游尝试次数均不能用于确认实际扣费。
     </p>

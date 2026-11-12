@@ -1,0 +1,76 @@
+.settings-view {
+  max-width: 1120px;
+}
+.settings-section > header {
+  border-bottom: 1px solid var(--border);
+}
+.settings-form {
+  padding: 0 24px;
+}
+.setting-row {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  justify-content: space-between;
+  gap: 24px;
+  padding: 24px 0;
+  border-bottom: 1px solid var(--border);
+  font-size: 14px;
+}
+.setting-row:last-child {
+  border-bottom: 0;
+}
+.setting-row strong,
+.setting-row small {
+  display: block;
+}
+.setting-row small {
+  margin-top: 4px;
+  font-family: "SFMono-Regular", Consolas, monospace;
+  font-size: 12px;
+  font-weight: 400;
+}
+.setting-control {
+  width: 44%;
+  flex-shrink: 0;
+}
+.setting-control > input,
+.setting-control > select {
+  width: 100%;
+}
+.save-bar {
+  position: sticky;
+  bottom: max(12px, env(safe-area-inset-bottom));
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 16px 24px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow);
+  flex-wrap: wrap;
+  gap: 16px;
+  font-size: 14px;
+}
+@media (max-width: 767px) {
+  .settings-form {
+    padding-inline: 16px;
+  }
+  .setting-row {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 12px;
+  }
+  .setting-control {
+    width: 100%;
+  }
+  .save-bar {
+    position: static;
+    padding: 16px;
+  }
+  .save-bar .toolbar-actions {
+    width: 100%;
+    justify-content: flex-end;
+  }
+}

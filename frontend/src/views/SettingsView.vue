@@ -72,13 +72,17 @@ const groups = [
         <div class="settings-form">
           <label v-for="key in group.keys" :key="key" class="setting-row"
             ><span
-              ><strong>{{ labels[key] || key }}</strong
-              ><small>{{ key }}</small></span
+              ><strong :id="`setting-label-${key}`">{{
+                labels[key] || key
+              }}</strong
+              ><small :id="`setting-hint-${key}`">{{ key }}</small></span
             >
             <div class="setting-control">
               <select
                 v-if="key === 'CODEBUDDY_SITE'"
                 v-model="settings[key]"
+                :aria-labelledby="`setting-label-${key}`"
+                :aria-describedby="`setting-hint-${key}`"
                 :disabled="saving"
               >
                 <option value="china">国内站</option>
@@ -86,6 +90,8 @@ const groups = [
               ><select
                 v-else-if="key === 'CODEBUDDY_AUTO_CHECKIN'"
                 v-model="settings[key]"
+                :aria-labelledby="`setting-label-${key}`"
+                :aria-describedby="`setting-hint-${key}`"
                 :disabled="saving"
               >
                 <option value="true">开启</option>
@@ -93,6 +99,8 @@ const groups = [
               ><input
                 v-else
                 v-model="settings[key]"
+                :aria-labelledby="`setting-label-${key}`"
+                :aria-describedby="`setting-hint-${key}`"
                 :disabled="readonly.includes(key) || saving"
                 :required="
                   ['CODEBUDDY_PASSWORD', 'CODEBUDDY_CHECKIN_TIME'].includes(key)

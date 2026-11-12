@@ -1,6 +1,6 @@
 <script setup>
 import { computed, ref } from "vue";
-import { Route, ShieldCheck } from "@lucide/vue";
+import { Route, ShieldCheck, ChevronDown } from "@lucide/vue";
 import { dateTime, eventLabels } from "../../lib/format";
 const props = defineProps({ events: Array, cooldownSeconds: Number });
 defineEmits(["request"]);
@@ -42,19 +42,21 @@ const visibleEvents = computed(() =>
       </div>
     </section>
     <section class="data-section rules">
-      <header>
-        <h3>切换规则</h3>
-        <ShieldCheck :size="17" />
-      </header>
-      <ol>
-        <li>持续使用当前可用凭证。</li>
-        <li>上游明确返回积分不足时，跳过该凭证 {{ cooldownSeconds }} 秒。</li>
-        <li>响应尚未输出时，可转到下一个凭证。</li>
-        <li>网络异常不会自动重发，避免重复消耗。</li>
-      </ol>
-      <p class="muted">
-        可用状态依据有效期与冷却记录判断；额度为最近一次查询结果，以官方后台为准。
-      </p>
+      <details>
+        <summary>
+          <span><ShieldCheck :size="18" aria-hidden="true" />切换规则</span
+          ><ChevronDown :size="16" class="rule-chevron" aria-hidden="true" />
+        </summary>
+        <ol>
+          <li>持续使用当前可用凭证。</li>
+          <li>上游明确返回积分不足时，跳过该凭证 {{ cooldownSeconds }} 秒。</li>
+          <li>响应尚未输出时，可转到下一个凭证。</li>
+          <li>网络异常不会自动重发，避免重复消耗。</li>
+        </ol>
+        <p class="muted">
+          可用状态依据有效期与冷却记录判断；额度为最近一次查询结果，以官方后台为准。
+        </p>
+      </details>
     </section>
   </aside>
 </template>

@@ -11,18 +11,22 @@ import RequestDetails from "../components/requests/RequestDetails.vue";
 import CredentialTest from "../components/credentials/CredentialTest.vue";
 import WorkbuddyPanel from "../components/credentials/WorkbuddyPanel.vue";
 import { useQuotas } from "../composables/useQuotas";
+import ResourceMeta from "../components/ResourceMeta.vue";
+import EmptyState from "../components/EmptyState.vue";
+import { useTabs } from "../composables/useTabs";
 import { useResource } from "../composables/useResource";
 import { useAction } from "../composables/useAction";
 import { consoleApi } from "../services/console";
 import { credentialLabel } from "../lib/format";
 const tab = ref("codebuddy");
+const onTabKeydown = useTabs(tab, ["codebuddy", "workbuddy"]);
 const quotas = useQuotas("codebuddy");
 async function refreshAccounts() {
   await Promise.all([refresh(), quotas.refresh()]);
 }
 const testing = ref(null);
 const selectedRequest = ref(null);
-const { data, loading, error, refresh } = useResource(
+const { data, loading, error, updatedAt, refresh } = useResource(
   consoleApi.credentials,
   {
     credentials: [],
@@ -77,7 +81,7 @@ function remove(row) {
     <PageHeader
       title="凭证管理"
       eyebrow="CREDENTIALS"
-      description="管理账号授权，让每一次请求都有清晰的去向。"
+      description="授权账号、查看剩余额度并管理切换策略。"
       ><template v-if="tab === 'codebuddy'"
         ><button
           class="button secondary"
@@ -89,9 +93,16 @@ function remove(row) {
           product="codebuddy"
           @saved="refreshAccounts" /></template
     ></PageHeader>
-    <div class="tabs" role="tablist" aria-label="凭证产品">
+    <div
+      class="tabs"
+      role="tablist"
+      aria-label="凭证产品"
+      @keydown="onTabKeydown"
+    >
       <button
         id="codebuddy-tab"
+        aria-controls="codebuddy-panel"
+        :tabindex="tab === 'codebuddy' ? 0 : -1"
         :class="{ active: tab === 'codebuddy' }"
         role="tab"
         :aria-selected="tab === 'codebuddy'"
@@ -100,6 +111,8 @@ function remove(row) {
         CodeBuddy <span>{{ data.credentials.length }}</span></button
       ><button
         id="workbuddy-tab"
+        aria-controls="workbuddy-panel"
+        :tabindex="tab === 'workbuddy' ? 0 : -1"
         :class="{ active: tab === 'workbuddy' }"
         role="tab"
         :aria-selected="tab === 'workbuddy'"
@@ -108,7 +121,13 @@ function remove(row) {
         WorkBuddy 签到
       </button>
     </div>
-    <template v-if="tab === 'codebuddy'">
+    <div
+      v-if="tab === 'codebuddy'"
+      id="codebuddy-panel"
+      role="tabpanel"
+      aria-labelledby="codebuddy-tab"
+      class="view-stack"
+    >
       <ResourceNotice :error="error" @retry="refresh" />
       <RoutingSummary :routing="data" :busy="busy" @mode="mode" />
       <div class="credential-layout">
@@ -118,26 +137,28 @@ function remove(row) {
               <h3>
                 凭证池 <span class="count">{{ data.credentials.length }}</span>
               </h3>
-              <small
-                >{{ data.available }} 个可用 · 状态每 5 秒更新，额度缓存 5
-                分钟</small
-              >
+              <small>{{ data.available }} 个可用 · 按账号管理授权与额度</small>
             </div>
           </header>
           <div class="table-toolbar credential-filters">
-            <input
-              v-model="search"
-              type="search"
-              placeholder="搜索账号或凭证文件"
-              aria-label="搜索凭证"
-            /><select v-model="state" aria-label="凭证状态">
-              <option value="">全部状态</option>
-              <option value="available">可用</option>
-              <option value="refreshable">可自动续期</option>
-              <option value="cooldown">冷却中</option>
-              <option value="reauthorize">需要重新授权</option>
-              <option value="expired">已过期</option>
-            </select>
+            <label
+              ><span>搜索账号</span
+              ><input
+                v-model="search"
+                type="search"
+                placeholder="搜索账号或凭证文件"
+                aria-label="搜索账号" /></label
+            ><label
+              ><span>凭证状态</span
+              ><select v-model="state" aria-label="凭证状态">
+                <option value="">全部状态</option>
+                <option value="available">可用</option>
+                <option value="refreshable">可自动续期</option>
+                <option value="cooldown">冷却中</option>
+                <option value="reauthorize">需要重新授权</option>
+                <option value="expired">已过期</option>
+              </select></label
+            >
             <button
               class="button secondary"
               :disabled="!filtered"
@@ -146,9 +167,11 @@ function remove(row) {
               <RotateCcw :size="15" />重置
             </button>
           </div>
-          <div v-if="loading && !data.credentials.length" class="empty-state">
-            正在加载凭证…
-          </div>
+          <EmptyState
+            v-if="loading && !data.credentials.length"
+            loading
+            title="正在加载凭证…"
+          />
           <CredentialTable
             v-else
             :rows="rows"
@@ -166,6 +189,11 @@ function remove(row) {
             @saved="refreshAccounts"
             @reset="resetFilters"
           />
+          <ResourceMeta
+            :updated-at="updatedAt"
+            :loading="loading"
+            label="状态每 5 秒更新 · 额度缓存 5 分钟"
+          />
         </section>
         <RoutingTimeline
           :events="data.events"
@@ -173,8 +201,15 @@ function remove(row) {
           :cooldown-seconds="data.cooldown_seconds"
         />
       </div>
-    </template>
-    <WorkbuddyPanel v-else />
+    </div>
+    <div
+      v-else
+      id="workbuddy-panel"
+      role="tabpanel"
+      aria-labelledby="workbuddy-tab"
+    >
+      <WorkbuddyPanel />
+    </div>
     <RequestDetails
       v-if="selectedRequest"
       :id="selectedRequest"

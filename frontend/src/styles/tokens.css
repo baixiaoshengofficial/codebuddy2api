@@ -5,79 +5,98 @@
   font-synthesis: none;
   color-scheme: light;
 
-  --bg: #f5f7fb;
-  --surface: #ffffff;
-  --surface-subtle: #f8fafc;
-  --surface-hover: #f1f5f9;
-  --text: #1e293b;
-  --muted: #5b677a;
-  --border: #e2e8f0;
-  --border-strong: #cbd5e1;
-
-  --primary: #2563eb;
-  --primary-hover: #1d4ed8;
-  --primary-soft: #edf3ff;
-  --primary-border: #c7d9fc;
+  /* Element UI / Theme Chalk default palette. */
+  --primary: #409eff;
+  --primary-hover: #66b1ff;
+  --primary-soft: #ecf5ff;
+  --primary-border: #b3d8ff;
   --on-primary: #ffffff;
-  --focus: #2563eb;
-
-  --success: #147d52;
-  --success-soft: #e9f8f0;
-  --warning: #9a5a00;
-  --warning-soft: #fff4dc;
-  --danger: #c13838;
+  --success: #67c23a;
+  --success-soft: #f0f9eb;
+  --warning: #e6a23c;
+  --warning-soft: #fdf6ec;
+  --danger: #f56c6c;
   --danger-soft: #fef0f0;
+  --info: #909399;
 
-  --sidebar: #111a2e;
-  --sidebar-text: #e2e8f0;
-  --sidebar-muted: #a6b4c9;
-  --sidebar-border: #28344b;
-  --sidebar-hover: #1d2a41;
-  --sidebar-active: #2563eb;
-  --sidebar-on-active: #ffffff;
-  --sidebar-focus: #93c5fd;
+  --bg: #f5f7fa;
+  --surface: #ffffff;
+  --surface-subtle: #f5f7fa;
+  --surface-hover: #f2f6fc;
+  --text: #303133;
+  --muted: #606266;
+  --border: #ebeef5;
+  --border-strong: #dcdfe6;
 
-  --overlay: rgb(8 15 30 / 48%);
-  --shadow: 0 12px 40px rgb(15 23 42 / 12%);
-  --shadow-small: 0 1px 3px rgb(15 23 42 / 8%);
-  --card-shadow: 0 1px 2px rgb(15 23 42 / 3%);
+  /* Deeper shades keep small labels readable on Element's pale fills. */
+  --primary-ink: #1d5e9f;
+  --success-ink: #3e7523;
+  --warning-ink: #8a6124;
+  --danger-ink: #b14343;
+  --focus: #1d5e9f;
+
+  --sidebar: #ffffff;
+  --sidebar-text: #303133;
+  --sidebar-muted: #606266;
+  --sidebar-border: #e4e7ed;
+  --sidebar-hover: #f5f7fa;
+  --sidebar-active: #ecf5ff;
+  --sidebar-on-active: #1d5e9f;
+  --sidebar-focus: #1d5e9f;
+
+  --overlay: rgb(0 0 0 / 50%);
+  --shadow: 0 2px 12px rgb(0 0 0 / 10%);
+  --shadow-small: 0 2px 4px rgb(0 0 0 / 8%);
+  --card-shadow: 0 2px 12px rgb(0 0 0 / 3%);
+
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 20px;
+  --space-6: 24px;
+  --space-8: 32px;
+  --space-10: 40px;
+  --radius-sm: 4px;
+  --radius-md: 6px;
+  --radius-lg: 8px;
+  --control-height: 44px;
+  --motion-fast: 150ms;
+  --motion-normal: 200ms;
+  --header-height: 72px;
 }
 :root[data-theme="dark"] {
   color-scheme: dark;
-  --bg: #0b1220;
-  --surface: #141e30;
-  --surface-subtle: #19263b;
-  --surface-hover: #20304a;
-  --text: #e6edf8;
-  --muted: #a0aec3;
-  --border: #2a3952;
-  --border-strong: #425571;
-
-  --primary: #8ab4ff;
-  --primary-hover: #aecbff;
-  --primary-soft: #1c3155;
-  --primary-border: #355689;
-  --on-primary: #0f172a;
-  --focus: #8ab4ff;
-
-  --success: #62d5a0;
-  --success-soft: #113529;
-  --warning: #f3c378;
-  --warning-soft: #3c2d16;
-  --danger: #ff9a9a;
-  --danger-soft: #442125;
-
-  --sidebar: #0d1525;
-  --sidebar-text: #e6edf8;
-  --sidebar-muted: #a0aec3;
-  --sidebar-border: #26354d;
-  --sidebar-hover: #19263b;
-  --sidebar-active: #223f74;
-  --sidebar-on-active: #e2edff;
-  --sidebar-focus: #8ab4ff;
-
-  --overlay: rgb(3 7 18 / 68%);
-  --shadow: 0 12px 40px rgb(0 0 0 / 32%);
-  --shadow-small: 0 1px 3px rgb(0 0 0 / 20%);
-  --card-shadow: 0 1px 2px rgb(0 0 0 / 12%);
+  /* Element Plus dark neutral surfaces and the same brand colors. */
+  --bg: #0a0a0a;
+  --surface: #1d1e1f;
+  --surface-subtle: #141414;
+  --surface-hover: #262727;
+  --text: #e5eaf3;
+  --muted: #a3a6ad;
+  --border: #363637;
+  --border-strong: #4c4d4f;
+  --primary-hover: #3375b9;
+  --primary-soft: #18222c;
+  --primary-border: #2a598a;
+  --success-soft: #1c2518;
+  --warning-soft: #292218;
+  --danger-soft: #2b1d1d;
+  --primary-ink: #79bbff;
+  --success-ink: #95d475;
+  --warning-ink: #eebe77;
+  --danger-ink: #f89898;
+  --focus: #79bbff;
+  --sidebar: #141414;
+  --sidebar-text: #e5eaf3;
+  --sidebar-muted: #a3a6ad;
+  --sidebar-border: #363637;
+  --sidebar-hover: #262727;
+  --sidebar-active: #18222c;
+  --sidebar-on-active: #79bbff;
+  --sidebar-focus: #79bbff;
+  --overlay: rgb(0 0 0 / 70%);
+  --shadow: 0 12px 32px rgb(0 0 0 / 36%);
+  --shadow-small: 0 2px 4px rgb(0 0 0 / 25%);
+  --card-shadow: 0 2px 8px rgb(0 0 0 / 15%);
 }

@@ -1,0 +1,123 @@
+.metric-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 16px;
+}
+.metric-card {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  background: var(--surface);
+  padding: 24px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+}
+.metric-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  font-size: 14px;
+  color: var(--muted);
+}
+.metric-icon {
+  display: grid;
+  place-items: center;
+  width: 36px;
+  height: 36px;
+  border-radius: 10px;
+  color: var(--primary-ink);
+  background: var(--primary-soft);
+}
+.metric-card > strong {
+  font-size: 32px;
+  font-weight: 650;
+  letter-spacing: -1px;
+  font-variant-numeric: tabular-nums;
+}
+.endpoint-banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 24px;
+  background: var(--primary-soft);
+  border: 1px solid var(--primary-border);
+  border-radius: var(--radius-lg);
+  padding: 24px;
+}
+.endpoint-banner h3 {
+  font-size: 20px;
+  margin-bottom: 12px;
+}
+.endpoint-banner code {
+  color: var(--primary-ink);
+  overflow-wrap: anywhere;
+}
+.usage-list {
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+  padding: 0 24px 24px;
+}
+.usage-list > div > div {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 12px;
+  font-size: 14px;
+}
+.usage-list span {
+  color: var(--muted);
+  font-size: 12px;
+  white-space: nowrap;
+}
+.usage-list meter {
+  display: block;
+  width: 100%;
+  height: 6px;
+  border: 0;
+  border-radius: 4px;
+  background: var(--surface-hover);
+}
+meter::-webkit-meter-bar {
+  background: var(--surface-hover);
+  border: 0;
+}
+meter::-webkit-meter-optimum-value {
+  background: var(--primary);
+}
+meter::-moz-meter-bar {
+  background: var(--primary);
+}
+.dashboard-note {
+  font-size: 12px;
+  max-width: 85ch;
+}
+@media (max-width: 1023px) {
+  .metric-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+@media (max-width: 767px) {
+  .metric-grid {
+    gap: 12px;
+  }
+  .metric-card {
+    padding: 16px;
+  }
+  .metric-card > strong {
+    font-size: 28px;
+  }
+  .metric-icon {
+    display: none;
+  }
+  .metric-heading {
+    font-size: 13px;
+  }
+  .endpoint-banner {
+    flex-direction: column;
+    padding: 24px 16px;
+    align-items: flex-start;
+  }
+}

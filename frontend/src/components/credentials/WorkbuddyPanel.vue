@@ -1,6 +1,8 @@
 <script setup>
 import { computed } from "vue";
 import { Gift, RefreshCw, Trash2 } from "@lucide/vue";
+import EmptyState from "../EmptyState.vue";
+import ResourceMeta from "../ResourceMeta.vue";
 import QuotaCell from "./QuotaCell.vue";
 import { useQuotas } from "../../composables/useQuotas";
 import AuthorizationPanel from "./AuthorizationPanel.vue";
@@ -15,7 +17,7 @@ const quotas = useQuotas("workbuddy");
 async function refreshAccounts() {
   await Promise.all([refresh(), quotas.refresh()]);
 }
-const { data, loading, error, refresh } = useResource(
+const { data, loading, error, updatedAt, refresh } = useResource(
   async () => {
     const [credentials, checkin] = await Promise.all([
       consoleApi.workbuddy(),
@@ -99,15 +101,19 @@ async function remove(row) {
       这些账号用于签到，不参与 CodeBuddy 模型请求的凭证切换。额度缓存 5
       分钟；同一账号在两种产品下的额度可能共享。
     </p>
-    <div v-if="!rows.length" class="empty-state">
-      {{
+    <EmptyState
+      v-if="!rows.length"
+      :icon="Gift"
+      :loading="loading"
+      :title="
         loading
-          ? "正在加载签到账号…"
+          ? '正在加载签到账号…'
           : error
-            ? "签到账号加载失败，请重试"
-            : data.checkin.message || "添加 WorkBuddy 账号后即可签到"
-      }}
-    </div>
+            ? '签到账号加载失败'
+            : '暂无 WorkBuddy 账号'
+      "
+      :description="error || '添加 WorkBuddy 账号后即可签到和查询额度。'"
+    />
     <div v-for="row in rows" :key="row.filename" class="workbuddy-row">
       <div class="avatar"><Gift :size="18" /></div>
       <div class="workbuddy-account">
@@ -184,5 +190,10 @@ async function remove(row) {
         </button>
       </div>
     </div>
+    <ResourceMeta
+      :updated-at="updatedAt"
+      :loading="loading"
+      label="账号状态每 30 秒更新 · 额度缓存 5 分钟"
+    />
   </section>
 </template>

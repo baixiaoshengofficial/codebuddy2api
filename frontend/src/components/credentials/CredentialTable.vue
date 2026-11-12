@@ -1,6 +1,13 @@
 <script setup>
 import { onBeforeUnmount, onMounted, ref } from "vue";
-import { KeyRound, LockKeyhole, Trash2, ShieldCheck } from "@lucide/vue";
+import {
+  KeyRound,
+  LockKeyhole,
+  Trash2,
+  ShieldCheck,
+  Search,
+} from "@lucide/vue";
+import EmptyState from "../EmptyState.vue";
 import QuotaCell from "./QuotaCell.vue";
 import StatusBadge from "../StatusBadge.vue";
 import AuthorizationPanel from "./AuthorizationPanel.vue";
@@ -51,12 +58,15 @@ function cooldown(row) {
       <tbody>
         <tr v-if="!rows.length">
           <td colspan="5">
-            <div class="empty-state">
-              <KeyRound :size="24" /><strong>{{
+            <EmptyState
+              :icon="filtered ? Search : KeyRound"
+              :title="filtered ? '没有符合条件的凭证' : '暂无 CodeBuddy 凭证'"
+              :description="
                 filtered
-                  ? "没有符合条件的凭证"
-                  : "暂无凭证，点击“添加凭证”完成授权"
-              }}</strong>
+                  ? '调整搜索内容或凭证状态后再试。'
+                  : '点击添加凭证，完成账号授权后即可使用。'
+              "
+            >
               <button
                 v-if="filtered"
                 class="button secondary"
@@ -64,7 +74,7 @@ function cooldown(row) {
               >
                 重置筛选
               </button>
-            </div>
+            </EmptyState>
           </td>
         </tr>
         <tr

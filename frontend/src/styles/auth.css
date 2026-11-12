@@ -1,0 +1,75 @@
+.login-layout {
+  min-height: 100dvh;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+}
+.login-panel {
+  width: min(460px, 100%);
+  display: flex;
+  flex-direction: column;
+  gap: 32px;
+  padding: 36px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  box-shadow: var(--shadow);
+}
+.login-panel h1 {
+  font-size: 28px;
+}
+.login-brand {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  font-size: 16px;
+}
+.login-form {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.password-field {
+  display: flex;
+  align-items: center;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+}
+.password-field:focus-within {
+  outline: 2px solid var(--focus);
+  outline-offset: 3px;
+}
+.password-field input {
+  flex: 1;
+  width: 100%;
+  border: 0;
+  background: transparent;
+}
+.password-field input:focus-visible {
+  outline: none;
+}
+.password-field button {
+  margin-right: 4px;
+}
+.login-footer {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  color: var(--muted);
+  font-size: 12px;
+  padding-top: 20px;
+  border-top: 1px solid var(--border);
+}
+.login-button {
+  width: 100%;
+  margin-top: 8px;
+}
+@media (max-width: 767px) {
+  .login-layout {
+    padding: 16px;
+  }
+  .login-panel {
+    padding: 28px 24px;
+  }
+}

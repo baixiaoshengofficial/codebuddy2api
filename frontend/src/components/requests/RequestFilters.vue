@@ -59,19 +59,21 @@ function searchInput(event) {
         <small class="nowrap">北京时间 UTC+8</small>
       </div>
       <form class="search-form" role="search" @submit.prevent="$emit('search')">
-        <input
-          :value="filters.search"
-          aria-label="搜索请求 ID 或输入"
-          :placeholder="
-            pendingSearch ? '回车应用搜索' : '搜索请求 ID 或输入内容'
-          "
-          :title="
-            pendingSearch ? '搜索尚未应用，按回车或点击搜索' : '按回车搜索'
-          "
-          type="search"
-          maxlength="200"
-          @input="searchInput"
-        />
+        <label class="grow"
+          ><span>搜索请求</span
+          ><input
+            :value="filters.search"
+            aria-label="搜索请求 ID 或输入"
+            :placeholder="
+              pendingSearch ? '回车应用搜索' : '搜索请求 ID 或输入内容'
+            "
+            :title="
+              pendingSearch ? '搜索尚未应用，按回车或点击搜索' : '按回车搜索'
+            "
+            type="search"
+            maxlength="200"
+            @input="searchInput"
+        /></label>
         <button
           class="button secondary"
           :class="{ 'search-pending': pendingSearch }"
@@ -111,24 +113,25 @@ function searchInput(event) {
       >
     </form>
     <div class="request-filter-selects">
-      <select
-        v-for="field in fields"
-        :key="field.key"
-        :value="filters[field.key]"
-        :aria-label="`筛选${field.label}`"
-        :title="filters[field.key] || `全部${field.label}`"
-        @change="set(field.key, $event.target.value)"
-      >
-        <option value="">全部{{ field.label }}</option>
-        <option
-          v-for="item in choices(field)"
-          :key="item.value"
-          :value="item.value"
-          :title="item.label"
+      <label v-for="field in fields" :key="field.key"
+        ><span>{{ field.label }}</span
+        ><select
+          :value="filters[field.key]"
+          :aria-label="`筛选${field.label}`"
+          :title="filters[field.key] || `全部${field.label}`"
+          @change="set(field.key, $event.target.value)"
         >
-          {{ item.label }}
-        </option>
-      </select>
+          <option value="">全部{{ field.label }}</option>
+          <option
+            v-for="item in choices(field)"
+            :key="item.value"
+            :value="item.value"
+            :title="item.label"
+          >
+            {{ item.label }}
+          </option>
+        </select></label
+      >
       <button
         class="button secondary reset-filters"
         :disabled="!activeCount && !pendingSearch && !pendingRange"
